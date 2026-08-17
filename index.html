@@ -180,7 +180,7 @@
           </select>
         </div>
         <div>
-          <label for="minZoom">Min street-name zoom</label>
+          <label for="minZoom">Map zoom (street names)</label>
           <select id="minZoom">
             <option value="15">15 (broader)</option>
             <option value="16" selected>16 (readable names)</option>
@@ -189,8 +189,8 @@
         </div>
       </div>
       <p class="hint">
-        Higher min-zoom and DPI produce clearer road names but cover less area per page.
-        The app prioritizes readability and clips coverage to fit max pages.
+        Higher zoom and DPI produce clearer road names but cover less area per page.
+        Coverage is clipped to fit the max number of pages.
       </p>
 
       <button id="generateBtn">Generate PDF</button>
@@ -461,31 +461,14 @@
           };
         }
 
-        // Find the highest zoom (>= minZoom) such that the full requested area
-        // can be covered by the grid, OR fall back to minZoom and clip coverage.
-        let chosenZoom = minZoom;
-        let pageCov = coverageAtZoom(chosenZoom);
-        let totalW = pageCov.widthM * grid.cols;
-        let totalH = pageCov.heightM * grid.rows;
+        // Use the zoom level selected by the user.
+        // Coverage is clipped if the requested radius does not fit at that zoom.
+        const chosenZoom = minZoom;
+        const pageCov = coverageAtZoom(chosenZoom);
+        const totalW = pageCov.widthM * grid.cols;
+        const totalH = pageCov.heightM * grid.rows;
         const requestedW = halfSideM * 2;
         const requestedH = halfSideM * 2;
-
-        // If even at minZoom we cannot cover the full radius, we keep minZoom
-        // (readability first) and shrink the covered area.
-        // If we can cover more, we may increase zoom a little for extra sharpness,
-        // but never below the readability floor.
-        if (totalW >= requestedW && totalH >= requestedH) {
-          // Try higher zooms while still covering the full area
-          for (let z = minZoom + 1; z <= 18; z++) {
-            const c = coverageAtZoom(z);
-            if (c.widthM * grid.cols >= requestedW && c.heightM * grid.rows >= requestedH) {
-              chosenZoom = z;
-              pageCov = c;
-              totalW = c.widthM * grid.cols;
-              totalH = c.heightM * grid.rows;
-            } else break;
-          }
-        }
 
         // Final covered size (centered). May be smaller than requested if clipped.
         const coverW = Math.min(requestedW, totalW);
