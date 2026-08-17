@@ -193,14 +193,14 @@
         <div>
           <label for="labelScale">Street name size</label>
           <select id="labelScale">
-            <option value="1.4">Large</option>
-            <option value="1.8" selected>Extra large</option>
-            <option value="2.2">Huge</option>
+            <option value="2.0">Large</option>
+            <option value="2.8" selected>Extra large</option>
+            <option value="3.5">Huge</option>
           </select>
         </div>
       </div>
       <p class="hint">
-        Vector tiles (OpenFreeMap). Larger street-name size makes labels easier to read when printed.
+        Vector tiles (OpenFreeMap). Larger labels + simplified style (less grass/water fill) to save ink.
         Coverage is clipped to fit the max number of pages.
       </p>
 
@@ -231,15 +231,16 @@
     let cancelled = false;
     let renderMap = null;
 
-    function setStatus(msg, type = '') {
-      const el = document.getElementById('status');
+    function setStatus(msg, type) {
+      type = type || '';
+      var el = document.getElementById('status');
       el.textContent = msg;
       el.className = type ? 'status-' + type : '';
     }
 
     function setProgress(pct) {
-      const wrap = document.getElementById('progressWrap');
-      const bar = document.getElementById('progressBar');
+      var wrap = document.getElementById('progressWrap');
+      var bar = document.getElementById('progressBar');
       wrap.style.display = pct >= 0 ? 'block' : 'none';
       bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
     }
@@ -247,7 +248,7 @@
     function deg2rad(d) { return d * Math.PI / 180; }
 
     function metersPerDegree(lat) {
-      const latRad = deg2rad(lat);
+      var latRad = deg2rad(lat);
       return {
         lat: 111132.92 - 559.82 * Math.cos(2 * latRad) + 1.175 * Math.cos(4 * latRad),
         lon: 111412.84 * Math.cos(latRad) - 93.5 * Math.cos(3 * latRad)
@@ -255,23 +256,23 @@
     }
 
     function radiusToHalfSideMeters(radius, unit) {
-      const r = parseFloat(radius);
+      var r = parseFloat(radius);
       return unit === 'mi' ? r * 1609.344 : r * 1000;
     }
 
     async function geocode(address) {
-      const url = new URL('https://nominatim.openstreetmap.org/search');
+      var url = new URL('https://nominatim.openstreetmap.org/search');
       url.searchParams.set('q', address);
       url.searchParams.set('format', 'json');
       url.searchParams.set('limit', '1');
-      const res = await fetch(url.toString(), {
+      var res = await fetch(url.toString(), {
         headers: {
           'Accept': 'application/json',
           'User-Agent': 'PrintableMapPDF/2.0 (vector printable map tool)'
         }
       });
       if (!res.ok) throw new Error('Geocoding failed (' + res.status + ').');
-      const data = await res.json();
+      var data = await res.json();
       if (!data || !data.length) throw new Error('Address not found.');
       return {
         lat: parseFloat(data[0].lat),
@@ -281,7 +282,7 @@
     }
 
     function getPaperSizeMm(paper, orient) {
-      let w, h;
+      var w, h;
       if (paper === 'a4') { w = 210; h = 297; }
       else { w = 215.9; h = 279.4; }
       return orient === 'landscape'
@@ -290,7 +291,7 @@
     }
 
     function getMapAreaMm(paperSize) {
-      const margin = 12, header = 14, footer = 18;
+      var margin = 12, header = 14, footer = 18;
       return {
         widthMm: paperSize.widthMm - 2 * margin,
         heightMm: paperSize.heightMm - margin - header - footer,
@@ -299,11 +300,11 @@
     }
 
     function chooseGrid(maxPages) {
-      const maxSide = Math.ceil(Math.sqrt(maxPages));
-      let best = { rows: 1, cols: 1, pages: 1 };
-      for (let r = 1; r <= maxSide; r++) {
-        for (let c = 1; c <= maxSide; c++) {
-          const p = r * c;
+      var maxSide = Math.ceil(Math.sqrt(maxPages));
+      var best = { rows: 1, cols: 1, pages: 1 };
+      for (var r = 1; r <= maxSide; r++) {
+        for (var c = 1; c <= maxSide; c++) {
+          var p = r * c;
           if (p <= maxPages && (p > best.pages || (p === best.pages && Math.abs(r - c) < Math.abs(best.rows - best.cols)))) {
             best = { rows: r, cols: c, pages: p };
           }
@@ -312,30 +313,68 @@
       return best;
     }
 
-    function enlargeRoadLabels(map, scale) {
-      const style = map.getStyle();
+    function simplifyStyleForPrint(map) {
+      var style = map.getStyle();
       if (!style || !style.layers) return;
-      for (const layer of style.layers) {
+      var hidePatterns = [
+        'landcover', 'landuse', 'park', 'grass', 'wood', 'forest',
+        'wetland', 'glacier', 'sand', 'pitch', 'garden', 'allotments',
+        'cemetery', 'orchard', 'vineyard', 'farmland', 'farm',
+        'water', 'ocean', 'river', 'lake', 'waterway', 'basin',
+        'reservoir', 'dock', 'swimming', 'background'
+      ];
+      for (var i = 0; i < style.layers.length; i++) {
+        var layer = style.layers[i];
+        var id = (layer.id || '').toLowerCase();
+        var type = layer.type;
+        if (type === 'symbol' || type === 'line') continue;
+        if (id.indexOf('road') >= 0 || id.indexOf('highway') >= 0 || id.indexOf('bridge') >= 0 ||
+            id.indexOf('tunnel') >= 0 || id.indexOf('building') >= 0 || id.indexOf('boundary') >= 0 ||
+            id.indexOf('admin') >= 0 || id.indexOf('border') >= 0) continue;
+        var shouldHide = false;
+        for (var j = 0; j < hidePatterns.length; j++) {
+          if (id.indexOf(hidePatterns[j]) >= 0) { shouldHide = true; break; }
+        }
+        if (!shouldHide && (type === 'fill' || type === 'fill-extrusion' || type === 'raster')) {
+          shouldHide = true;
+        }
+        if (shouldHide) {
+          try { map.setLayoutProperty(layer.id, 'visibility', 'none'); } catch (e) {}
+        }
+      }
+      try {
+        if (map.getLayer('background')) {
+          map.setPaintProperty('background', 'background-color', '#ffffff');
+          map.setLayoutProperty('background', 'visibility', 'visible');
+        }
+      } catch (e) {}
+    }
+
+    function enlargeRoadLabels(map, scale) {
+      var style = map.getStyle();
+      if (!style || !style.layers) return;
+      for (var i = 0; i < style.layers.length; i++) {
+        var layer = style.layers[i];
         if (layer.type !== 'symbol') continue;
-        const id = layer.id.toLowerCase();
-        const isRoadLabel =
-          (id.includes('road') && (id.includes('label') || id.includes('name'))) ||
-          id.includes('transportation_name') ||
+        var id = layer.id.toLowerCase();
+        var isRoadLabel =
+          (id.indexOf('road') >= 0 && (id.indexOf('label') >= 0 || id.indexOf('name') >= 0)) ||
+          id.indexOf('transportation_name') >= 0 ||
           id === 'road_label' ||
-          (id.includes('highway') && id.includes('label'));
+          (id.indexOf('highway') >= 0 && id.indexOf('label') >= 0);
         if (!isRoadLabel) continue;
         try {
-          const current = map.getLayoutProperty(layer.id, 'text-size');
+          var current = map.getLayoutProperty(layer.id, 'text-size');
           if (current == null) continue;
           if (typeof current === 'number') {
             map.setLayoutProperty(layer.id, 'text-size', current * scale);
           } else if (Array.isArray(current)) {
             map.setLayoutProperty(layer.id, 'text-size', ['*', current, scale]);
           }
-          const halo = map.getPaintProperty(layer.id, 'text-halo-width');
-          if (typeof halo === 'number') {
-            map.setPaintProperty(layer.id, 'text-halo-width', Math.min(halo * 1.3, 2.5));
-          }
+          try {
+            map.setPaintProperty(layer.id, 'text-halo-width', 2.0);
+            map.setPaintProperty(layer.id, 'text-halo-color', '#ffffff');
+          } catch (e2) {}
         } catch (e) {}
       }
     }
@@ -392,6 +431,7 @@
         });
       });
 
+      simplifyStyleForPrint(renderMap);
       enlargeRoadLabels(renderMap, labelScale);
       await new Promise(function(r) { setTimeout(r, 100); });
       return renderMap;
@@ -412,7 +452,7 @@
       out.width = canvas.width;
       out.height = canvas.height;
       var ctx = out.getContext('2d');
-      ctx.fillStyle = '#f8f4f0';
+      ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, out.width, out.height);
       ctx.drawImage(canvas, 0, 0);
       return out;
