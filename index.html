@@ -180,7 +180,7 @@
       </div>
       <p class="hint">
         Higher DPI produces clearer road names but takes longer.
-        Coverage is clipped to fit the max number of pages. Zoom is fixed at 16 for readable street names.
+        Coverage is clipped to fit the max number of pages. Zoom is fixed at 17 for clear street names.
       </p>
 
       <button id="generateBtn">Generate PDF</button>
@@ -402,7 +402,7 @@
         const paper = document.getElementById('paper').value;
         const orient = document.getElementById('orient').value;
         const targetDpi = parseInt(document.getElementById('dpi').value, 10);
-        const minZoom = 16; // fixed for readable street names
+        const minZoom = 17; // fixed for clear, readable street names
 
         setStatus('Geocoding address…');
         const place = await geocode(address);
