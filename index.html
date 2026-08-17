@@ -1,1 +1,603 @@
-PLACEHOLDER
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Printable Tiled Road Map PDF</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0ea5e9;
+      --success: #22c55e;
+      --warn: #f59e0b;
+      --error: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: 1.5rem;
+    }
+    .container { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); margin-bottom: 1.75rem; font-size: 0.95rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input, select {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      color: var(--text);
+      font-size: 1rem;
+      margin-bottom: 1rem;
+    }
+    input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+    button {
+      width: 100%;
+      padding: 0.85rem 1.25rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #0f172a;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      margin-top: 0.75rem;
+    }
+    .btn-secondary:hover:not(:disabled) { background: #334155; }
+    #status {
+      margin-top: 1rem;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      font-size: 0.9rem;
+      min-height: 3.2rem;
+      white-space: pre-wrap;
+    }
+    .status-ok { border-color: var(--success); }
+    .status-warn { border-color: var(--warn); }
+    .status-error { border-color: var(--error); }
+    .progress-bar {
+      height: 6px;
+      background: #334155;
+      border-radius: 3px;
+      margin-top: 0.75rem;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar > div {
+      height: 100%;
+      background: var(--accent);
+      width: 0%;
+      transition: width 0.2s;
+    }
+    .hint { font-size: 0.8rem; color: var(--muted); margin-top: -0.6rem; margin-bottom: 1rem; }
+    .preview-wrap {
+      margin-top: 1rem;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      min-height: 180px;
+      display: none;
+    }
+    #previewCanvas { width: 100%; display: block; }
+    footer {
+      margin-top: 2rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    a { color: var(--accent); }
+    #mapCapture {
+      position: fixed;
+      left: -9999px;
+      top: 0;
+      width: 800px;
+      height: 600px;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    @media (max-width: 560px) {
+      .row, .row-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Printable Tiled Road Map PDF</h1>
+    <p class="subtitle">
+      Generate multi-page printable road maps centered on an address.
+      Uses vector tiles so street names can be enlarged for readability.
+    </p>
+
+    <div class="card">
+      <label for="address">Address or place name</label>
+      <input id="address" type="text" placeholder="e.g. 1600 Amphitheatre Parkway, Mountain View, CA" value="" />
+
+      <div class="row">
+        <div>
+          <label for="radius">Radius</label>
+          <input id="radius" type="number" min="0.1" step="0.1" value="1.5" />
+        </div>
+        <div>
+          <label for="unit">Unit</label>
+          <select id="unit">
+            <option value="mi" selected>Miles</option>
+            <option value="km">Kilometers</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row-3">
+        <div>
+          <label for="maxPages">Max pages</label>
+          <input id="maxPages" type="number" min="1" max="36" value="9" />
+        </div>
+        <div>
+          <label for="paper">Paper size</label>
+          <select id="paper">
+            <option value="letter" selected>Letter (8.5\u00d711\")</option>
+            <option value="a4">A4 (210\u00d7297 mm)</option>
+          </select>
+        </div>
+        <div>
+          <label for="orient">Orientation</label>
+          <select id="orient">
+            <option value="landscape" selected>Landscape</option>
+            <option value="portrait">Portrait</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="dpi">Target print DPI</label>
+          <select id="dpi">
+            <option value="150">150 (faster)</option>
+            <option value="180" selected>180 (good balance)</option>
+            <option value="200">200 (sharper)</option>
+            <option value="250">250 (high quality)</option>
+          </select>
+        </div>
+        <div>
+          <label for="labelScale">Street name size</label>
+          <select id="labelScale">
+            <option value="1.4">Large</option>
+            <option value="1.8" selected>Extra large</option>
+            <option value="2.2">Huge</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint">
+        Vector tiles (OpenFreeMap). Larger street-name size makes labels easier to read when printed.
+        Coverage is clipped to fit the max number of pages.
+      </p>
+
+      <button id="generateBtn">Generate PDF</button>
+      <button id="cancelBtn" class="btn-secondary" style="display:none">Cancel</button>
+
+      <div id="status">Ready. Enter an address and click Generate.</div>
+      <div class="progress-bar" id="progressWrap"><div id="progressBar"></div></div>
+
+      <div class="preview-wrap" id="previewWrap">
+        <canvas id="previewCanvas"></canvas>
+      </div>
+    </div>
+
+    <footer>
+      Map data \u00a9 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors.
+      Vector tiles by <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>.
+    </footer>
+  </div>
+
+  <div id="mapCapture"></div>
+
+  <script>
+    const { jsPDF } = window.jspdf;
+    const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
+    const PLAN_ZOOM = 16.5;
+
+    let cancelled = false;
+    let renderMap = null;
+
+    function setStatus(msg, type = '') {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = type ? `status-${type}` : '';
+    }
+
+    function setProgress(pct) {
+      const wrap = document.getElementById('progressWrap');
+      const bar = document.getElementById('progressBar');
+      wrap.style.display = pct >= 0 ? 'block' : 'none';
+      bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    }
+
+    function deg2rad(d) { return d * Math.PI / 180; }
+
+    function metersPerDegree(lat) {
+      const latRad = deg2rad(lat);
+      return {
+        lat: 111132.92 - 559.82 * Math.cos(2 * latRad) + 1.175 * Math.cos(4 * latRad),
+        lon: 111412.84 * Math.cos(latRad) - 93.5 * Math.cos(3 * latRad)
+      };
+    }
+
+    function radiusToHalfSideMeters(radius, unit) {
+      const r = parseFloat(radius);
+      return unit === 'mi' ? r * 1609.344 : r * 1000;
+    }
+
+    async function geocode(address) {
+      const url = new URL('https://nominatim.openstreetmap.org/search');
+      url.searchParams.set('q', address);
+      url.searchParams.set('format', 'json');
+      url.searchParams.set('limit', '1');
+      const res = await fetch(url.toString(), {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'PrintableMapPDF/2.0 (vector printable map tool)'
+        }
+      });
+      if (!res.ok) throw new Error(`Geocoding failed (${res.status}).`);
+      const data = await res.json();
+      if (!data?.length) throw new Error('Address not found.');
+      return {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon),
+        display: data[0].display_name
+      };
+    }
+
+    function getPaperSizeMm(paper, orient) {
+      let w, h;
+      if (paper === 'a4') { w = 210; h = 297; }
+      else { w = 215.9; h = 279.4; }
+      return orient === 'landscape'
+        ? { widthMm: h, heightMm: w }
+        : { widthMm: w, heightMm: h };
+    }
+
+    function getMapAreaMm(paperSize) {
+      const margin = 12, header = 14, footer = 18;
+      return {
+        widthMm: paperSize.widthMm - 2 * margin,
+        heightMm: paperSize.heightMm - margin - header - footer,
+        margin, header, footer
+      };
+    }
+
+    function chooseGrid(maxPages) {
+      const maxSide = Math.ceil(Math.sqrt(maxPages));
+      let best = { rows: 1, cols: 1, pages: 1 };
+      for (let r = 1; r <= maxSide; r++) {
+        for (let c = 1; c <= maxSide; c++) {
+          const p = r * c;
+          if (p <= maxPages && (p > best.pages || (p === best.pages && Math.abs(r - c) < Math.abs(best.rows - best.cols)))) {
+            best = { rows: r, cols: c, pages: p };
+          }
+        }
+      }
+      return best;
+    }
+
+    function enlargeRoadLabels(map, scale) {
+      const style = map.getStyle();
+      if (!style?.layers) return;
+      for (const layer of style.layers) {
+        if (layer.type !== 'symbol') continue;
+        const id = layer.id.toLowerCase();
+        const isRoadLabel =
+          (id.includes('road') && (id.includes('label') || id.includes('name'))) ||
+          id.includes('transportation_name') ||
+          id === 'road_label' ||
+          (id.includes('highway') && id.includes('label'));
+        if (!isRoadLabel) continue;
+        try {
+          const current = map.getLayoutProperty(layer.id, 'text-size');
+          if (current == null) continue;
+          if (typeof current === 'number') {
+            map.setLayoutProperty(layer.id, 'text-size', current * scale);
+          } else if (Array.isArray(current)) {
+            map.setLayoutProperty(layer.id, 'text-size', ['*', current, scale]);
+          }
+          const halo = map.getPaintProperty(layer.id, 'text-halo-width');
+          if (typeof halo === 'number') {
+            map.setPaintProperty(layer.id, 'text-halo-width', Math.min(halo * 1.3, 2.5));
+          }
+        } catch (e) {}
+      }
+    }
+
+    function waitForIdle(map, timeoutMs = 25000) {
+      return new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error('Map render timeout')), timeoutMs);
+        map.once('idle', () => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
+    }
+
+    async function ensureRenderMap(widthPx, heightPx, labelScale) {
+      const container = document.getElementById('mapCapture');
+      container.style.width = widthPx + 'px';
+      container.style.height = heightPx + 'px';
+
+      if (renderMap) {
+        try { renderMap.remove(); } catch (_) {}
+        renderMap = null;
+      }
+
+      renderMap = new maplibregl.Map({
+        container: 'mapCapture',
+        style: STYLE_URL,
+        center: [0, 0],
+        zoom: 2,
+        interactive: false,
+        attributionControl: false,
+        preserveDrawingBuffer: true,
+        fadeDuration: 0,
+        pixelRatio: 1,
+        maxPitch: 0,
+        maxCanvasSize: [8192, 8192]
+      });
+
+      await new Promise((resolve, reject) => {
+        renderMap.once('load', resolve);
+        renderMap.once('error', (e) => reject(e.error || new Error('Map style load failed')));
+      });
+
+      enlargeRoadLabels(renderMap, labelScale);
+      await new Promise(r => setTimeout(r, 120));
+      return renderMap;
+    }
+
+    async function renderPageToCanvas(page, widthPx, heightPx, labelScale) {
+      const map = await ensureRenderMap(widthPx, heightPx, labelScale);
+      const bounds = [[page.west, page.south], [page.east, page.north]];
+      map.resize();
+      map.fitBounds(bounds, { padding: 0, animate: false, duration: 0 });
+      await waitForIdle(map);
+      await new Promise(r => setTimeout(r, 200));
+      await waitForIdle(map);
+
+      const canvas = map.getCanvas();
+      const out = document.createElement('canvas');
+      out.width = canvas.width;
+      out.height = canvas.height;
+      const ctx = out.getContext('2d');
+      ctx.fillStyle = '#f8f4f0';
+      ctx.fillRect(0, 0, out.width, out.height);
+      ctx.drawImage(canvas, 0, 0);
+      return out;
+    }
+
+    async function generate() {
+      cancelled = false;
+      const btn = document.getElementById('generateBtn');
+      const cancelBtn = document.getElementById('cancelBtn');
+      btn.disabled = true;
+      cancelBtn.style.display = 'block';
+      setProgress(0);
+      document.getElementById('previewWrap').style.display = 'none';
+
+      try {
+        const address = document.getElementById('address').value.trim();
+        if (!address) throw new Error('Please enter an address.');
+        const radiusVal = parseFloat(document.getElementById('radius').value);
+        if (!(radiusVal > 0)) throw new Error('Radius must be positive.');
+        const unit = document.getElementById('unit').value;
+        const maxPages = Math.max(1, Math.min(36, parseInt(document.getElementById('maxPages').value, 10) || 9));
+        const paper = document.getElementById('paper').value;
+        const orient = document.getElementById('orient').value;
+        const targetDpi = parseInt(document.getElementById('dpi').value, 10);
+        const labelScale = parseFloat(document.getElementById('labelScale').value);
+
+        setStatus('Geocoding address\u2026');
+        const place = await geocode(address);
+        if (cancelled) return;
+        setStatus(`Found: ${place.display}\nPlanning page grid\u2026`);
+
+        const halfSideM = radiusToHalfSideMeters(radiusVal, unit);
+        const mpd = metersPerDegree(place.lat);
+        const paperSize = getPaperSizeMm(paper, orient);
+        const mapArea = getMapAreaMm(paperSize);
+        const grid = chooseGrid(maxPages);
+
+        const mapPxW = Math.round((mapArea.widthMm / 25.4) * targetDpi);
+        const mapPxH = Math.round((mapArea.heightMm / 25.4) * targetDpi);
+
+        const resEq = 156543.03392 / Math.pow(2, PLAN_ZOOM);
+        const mpp = resEq * Math.cos(deg2rad(place.lat));
+        const pageWidthM = mapPxW * mpp;
+        const pageHeightM = mapPxH * mpp;
+
+        const totalW = pageWidthM * grid.cols;
+        const totalH = pageHeightM * grid.rows;
+        const requestedW = halfSideM * 2;
+        const requestedH = halfSideM * 2;
+        const coverW = Math.min(requestedW, totalW);
+        const coverH = Math.min(requestedH, totalH);
+        const clipped = coverW < requestedW * 0.98 || coverH < requestedH * 0.98;
+
+        const halfCoverLon = (coverW / 2) / mpd.lon;
+        const halfCoverLat = (coverH / 2) / mpd.lat;
+        const coverBbox = {
+          west: place.lon - halfCoverLon,
+          east: place.lon + halfCoverLon,
+          south: place.lat - halfCoverLat,
+          north: place.lat + halfCoverLat
+        };
+
+        const pageLonSpan = (coverBbox.east - coverBbox.west) / grid.cols;
+        const pageLatSpan = (coverBbox.north - coverBbox.south) / grid.rows;
+        const scaleDenom = Math.round(mpp * targetDpi * 39.3701);
+
+        setStatus(
+          `Center: ${place.lat.toFixed(5)}, ${place.lon.toFixed(5)}\n` +
+          `Grid: ${grid.rows}\u00d7${grid.cols} = ${grid.pages} pages\n` +
+          `Coverage: ${(coverW / 1609.344).toFixed(2)} mi \u00d7 ${(coverH / 1609.344).toFixed(2)} mi` +
+          (unit === 'km' ? ` (${(coverW / 1000).toFixed(2)} \u00d7 ${(coverH / 1000).toFixed(2)} km)` : '') +
+          (clipped ? '\n\u26a0 Coverage clipped to fit max pages.' : '') +
+          `\nRendering with enlarged street names\u2026`
+        );
+
+        const pages = [];
+        for (let row = 0; row < grid.rows; row++) {
+          for (let col = 0; col < grid.cols; col++) {
+            const north = coverBbox.north - row * pageLatSpan;
+            const south = north - pageLatSpan;
+            const west = coverBbox.west + col * pageLonSpan;
+            const east = west + pageLonSpan;
+            pages.push({ row, col, index: pages.length, north, south, west, east });
+          }
+        }
+
+        const pageCanvases = [];
+        for (let pi = 0; pi < pages.length; pi++) {
+          if (cancelled) throw new Error('Cancelled');
+          const page = pages[pi];
+          setStatus(
+            `Rendering page ${pi + 1} of ${pages.length} (row ${page.row + 1}, col ${page.col + 1})\u2026\n` +
+            `Vector map with enlarged street names`
+          );
+          setProgress(5 + (pi / pages.length) * 80);
+
+          const canvas = await renderPageToCanvas(page, mapPxW, mapPxH, labelScale);
+          pageCanvases.push({ canvas, page });
+
+          if (pi === 0) {
+            const preview = document.getElementById('previewCanvas');
+            const ctx = preview.getContext('2d');
+            const maxW = 680;
+            const scale = Math.min(1, maxW / canvas.width);
+            preview.width = Math.round(canvas.width * scale);
+            preview.height = Math.round(canvas.height * scale);
+            ctx.drawImage(canvas, 0, 0, preview.width, preview.height);
+            document.getElementById('previewWrap').style.display = 'block';
+          }
+        }
+
+        if (cancelled) throw new Error('Cancelled');
+        setStatus('Assembling PDF\u2026');
+        setProgress(90);
+
+        const pdf = new jsPDF({
+          orientation: orient,
+          unit: 'mm',
+          format: paper === 'a4' ? 'a4' : 'letter'
+        });
+
+        const pageH = paperSize.heightMm;
+        const mapX = mapArea.margin;
+        const mapY = mapArea.margin + mapArea.header;
+
+        for (let i = 0; i < pageCanvases.length; i++) {
+          if (i > 0) pdf.addPage();
+          const { canvas, page } = pageCanvases[i];
+          const imgData = canvas.toDataURL('image/jpeg', 0.92);
+
+          pdf.setFontSize(9);
+          pdf.setTextColor(40);
+          pdf.text(`Road Map \u2014 ${place.display.split(',').slice(0, 2).join(',')}`, mapX, mapArea.margin + 5);
+          pdf.setFontSize(8);
+          pdf.setTextColor(100);
+          pdf.text(
+            `Page ${i + 1} of ${pageCanvases.length}  \u00b7  Row ${page.row + 1}/${grid.rows}  Col ${page.col + 1}/${grid.cols}`,
+            mapX, mapArea.margin + 10
+          );
+
+          pdf.addImage(imgData, 'JPEG', mapX, mapY, mapArea.widthMm, mapArea.heightMm);
+          pdf.setDrawColor(180);
+          pdf.setLineWidth(0.2);
+          pdf.rect(mapX, mapY, mapArea.widthMm, mapArea.heightMm);
+
+          const footerY = pageH - mapArea.margin - 4;
+          pdf.setFontSize(7);
+          pdf.setTextColor(90);
+          pdf.text(
+            `\u00a9 OpenStreetMap \u00b7 OpenFreeMap  \u00b7  Center ${place.lat.toFixed(5)}, ${place.lon.toFixed(5)}  \u00b7  ~1:${scaleDenom.toLocaleString()}  \u00b7  Print at 100% scale`,
+            mapX, footerY
+          );
+          pdf.text(
+            `Radius requested: ${radiusVal} ${unit}` + (clipped ? ' (coverage clipped)' : ''),
+            mapX, footerY + 3.5
+          );
+
+          pdf.setDrawColor(0);
+          pdf.setLineWidth(0.3);
+          const mark = 3;
+          pdf.line(mapX - 1, mapY, mapX - 1 - mark, mapY);
+          pdf.line(mapX, mapY - 1, mapX, mapY - 1 - mark);
+          pdf.line(mapX + mapArea.widthMm + 1, mapY, mapX + mapArea.widthMm + 1 + mark, mapY);
+          pdf.line(mapX + mapArea.widthMm, mapY - 1, mapX + mapArea.widthMm, mapY - 1 - mark);
+          pdf.line(mapX - 1, mapY + mapArea.heightMm, mapX - 1 - mark, mapY + mapArea.heightMm);
+          pdf.line(mapX, mapY + mapArea.heightMm + 1, mapX, mapY + mapArea.heightMm + 1 + mark);
+          pdf.line(mapX + mapArea.widthMm + 1, mapY + mapArea.heightMm, mapX + mapArea.widthMm + 1 + mark, mapY + mapArea.heightMm);
+          pdf.line(mapX + mapArea.widthMm, mapY + mapArea.heightMm + 1, mapX + mapArea.widthMm, mapY + mapArea.heightMm + 1 + mark);
+        }
+
+        setProgress(100);
+        const fname = `road-map_${place.lat.toFixed(4)}_${place.lon.toFixed(4)}_${grid.rows}x${grid.cols}.pdf`;
+        pdf.save(fname);
+        setStatus(
+          `Done! Saved ${fname}\n` +
+          `${pageCanvases.length} pages with enlarged street names.\n` +
+          `Print at 100% scale and tape together using the row/col labels.` +
+          (clipped ? '\nNote: coverage was reduced to fit the page limit.' : ''),
+          clipped ? 'warn' : 'ok'
+        );
+      } catch (err) {
+        if (err.message === 'Cancelled') setStatus('Cancelled.', 'warn');
+        else {
+          console.error(err);
+          setStatus('Error: ' + err.message, 'error');
+        }
+      } finally {
+        btn.disabled = false;
+        cancelBtn.style.display = 'none';
+        if (renderMap) {
+          try { renderMap.remove(); } catch (_) {}
+          renderMap = null;
+        }
+        setTimeout(() => setProgress(-1), 1500);
+      }
+    }
+
+    document.getElementById('generateBtn').addEventListener('click', generate);
+    document.getElementById('cancelBtn').addEventListener('click', () => { cancelled = true; });
+  </script>
+</body>
+</html>
