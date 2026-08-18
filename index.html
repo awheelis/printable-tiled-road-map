@@ -327,15 +327,22 @@
         var layer = style.layers[i];
         var id = (layer.id || '').toLowerCase();
         var type = layer.type;
+        // Always hide 3D building extrusions (tall grey spikes when printed)
+        if (type === 'fill-extrusion') {
+          try { map.setLayoutProperty(layer.id, 'visibility', 'none'); } catch (e) {}
+          continue;
+        }
         if (type === 'symbol' || type === 'line') continue;
+        // Keep roads / boundaries only (not buildings)
         if (id.indexOf('road') >= 0 || id.indexOf('highway') >= 0 || id.indexOf('bridge') >= 0 ||
-            id.indexOf('tunnel') >= 0 || id.indexOf('building') >= 0 || id.indexOf('boundary') >= 0 ||
+            id.indexOf('tunnel') >= 0 || id.indexOf('boundary') >= 0 ||
             id.indexOf('admin') >= 0 || id.indexOf('border') >= 0) continue;
         var shouldHide = false;
         for (var j = 0; j < hidePatterns.length; j++) {
           if (id.indexOf(hidePatterns[j]) >= 0) { shouldHide = true; break; }
         }
-        if (!shouldHide && (type === 'fill' || type === 'fill-extrusion' || type === 'raster')) {
+        if (id.indexOf('building') >= 0) shouldHide = true;
+        if (!shouldHide && (type === 'fill' || type === 'raster')) {
           shouldHide = true;
         }
         if (shouldHide) {
