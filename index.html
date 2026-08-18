@@ -221,14 +221,14 @@
 
       <label for="labelScale">Street name size</label>
       <div class="slider-row">
-        <input id="labelScale" type="range" min="1.5" max="6" step="0.1" value="3.8" />
+        <input id="labelScale" type="range" min="1.0" max="2.5" step="0.05" value="1.5" />
         <div class="size-preview" id="labelScalePreview">
-          <span id="labelScaleValue">3.8×</span>
-          <span class="sample" id="labelScaleSample" style="font-size: 1.1rem;">Main St</span>
+          <span id="labelScaleValue">1.5×</span>
+          <span class="sample" id="labelScaleSample" style="font-size: 0.95rem;">Main St</span>
         </div>
       </div>
       <p class="hint">
-        Drag to set street name size. Sample shows relative scale on the map.
+        Drag to set street name size (1.0–2.5×). Default 1.5× usually looks best.
         Simplified style (less grass/water fill) saves ink. Coverage is clipped to max pages.
       </p>
 
@@ -393,11 +393,13 @@
         try {
           map.setLayoutProperty(id, 'text-size', [
             'interpolate', ['linear'], ['zoom'],
-            13, 12 * scale,
-            14, 13 * scale,
-            16, 14 * scale,
-            18, 16 * scale
+            13, 11 * scale,
+            14, 12 * scale,
+            16, 13 * scale,
+            18, 14 * scale
           ]);
+          try { map.setLayoutProperty(id, 'text-padding', 1); } catch (ePad) {}
+          try { map.setLayoutProperty(id, 'symbol-spacing', 120); } catch (eSp) {}
           map.setLayoutProperty(id, 'text-font', ['Noto Sans Regular']);
           map.setPaintProperty(id, 'text-halo-width', Math.min(2.5, 0.6 * scale));
           map.setPaintProperty(id, 'text-halo-color', '#ffffff');
@@ -566,7 +568,7 @@
           'Coverage: ' + (coverW / 1609.344).toFixed(2) + ' mi x ' + (coverH / 1609.344).toFixed(2) + ' mi' +
           (unit === 'km' ? ' (' + (coverW / 1000).toFixed(2) + ' x ' + (coverH / 1000).toFixed(2) + ' km)' : '') +
           (clipped ? '\nCoverage clipped to fit max pages.' : '') +
-          '\nStreet name size: ' + labelScale.toFixed(1) + 'x\n' +
+          '\nStreet name size: ' + labelScale.toFixed(2) + 'x\n' +
           'Rendering page 1 (canvas ' + mapPxW + 'x' + mapPxH + ')...'
         );
 
@@ -588,7 +590,7 @@
           setStatus(
             'Rendering page ' + (pi + 1) + ' of ' + pages.length +
             ' (row ' + (page.row + 1) + ', col ' + (page.col + 1) + ')...\n' +
-            'Street names at ' + labelScale.toFixed(1) + 'x'
+            'Street names at ' + labelScale.toFixed(2) + 'x'
           );
           setProgress(5 + (pi / pages.length) * 80);
 
@@ -675,7 +677,7 @@
         pdf.save(fname);
         setStatus(
           'Done! Saved ' + fname + '\n' +
-          pageCanvases.length + ' pages with street names at ' + labelScale.toFixed(1) + 'x.\n' +
+          pageCanvases.length + ' pages with street names at ' + labelScale.toFixed(2) + 'x.\n' +
           'Print at 100% scale and tape together using the row/col labels.' +
           (clipped ? '\nNote: coverage was reduced to fit the page limit.' : ''),
           clipped ? 'warn' : 'ok'
@@ -699,8 +701,8 @@
 
     function updateLabelScalePreview() {
       var v = parseFloat(document.getElementById('labelScale').value);
-      document.getElementById('labelScaleValue').textContent = v.toFixed(1) + '×';
-      var rem = 0.55 + (v - 1.5) * (1.4 / 4.5);
+      document.getElementById('labelScaleValue').textContent = v.toFixed(2) + '×';
+      var rem = 0.8 + (v - 1.0) * (0.45 / 1.5);
       document.getElementById('labelScaleSample').style.fontSize = rem.toFixed(2) + 'rem';
     }
     document.getElementById('labelScale').addEventListener('input', updateLabelScalePreview);
