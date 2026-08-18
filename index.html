@@ -355,13 +355,11 @@
         var layer = style.layers[i];
         var id = (layer.id || '').toLowerCase();
         var type = layer.type;
-        // Always hide 3D building extrusions (tall grey spikes when printed)
         if (type === 'fill-extrusion') {
           try { map.setLayoutProperty(layer.id, 'visibility', 'none'); } catch (e) {}
           continue;
         }
         if (type === 'symbol' || type === 'line') continue;
-        // Keep roads / boundaries only (not buildings)
         if (id.indexOf('road') >= 0 || id.indexOf('highway') >= 0 || id.indexOf('bridge') >= 0 ||
             id.indexOf('tunnel') >= 0 || id.indexOf('boundary') >= 0 ||
             id.indexOf('admin') >= 0 || id.indexOf('border') >= 0) continue;
@@ -388,31 +386,41 @@
     function enlargeRoadLabels(map, scale) {
       var style = map.getStyle();
       if (!style || !style.layers) return;
+      // OpenFreeMap liberty uses: highway-name-path / -minor / -major
+      var roadLabelIds = {
+        'highway-name-path': true,
+        'highway-name-minor': true,
+        'highway-name-major': true
+      };
       for (var i = 0; i < style.layers.length; i++) {
         var layer = style.layers[i];
         if (layer.type !== 'symbol') continue;
-        var id = layer.id.toLowerCase();
+        var id = layer.id;
+        var idLower = id.toLowerCase();
         var isRoadLabel =
-          (id.indexOf('road') >= 0 && (id.indexOf('label') >= 0 || id.indexOf('name') >= 0)) ||
-          id.indexOf('transportation_name') >= 0 ||
-          id === 'road_label' ||
-          (id.indexOf('highway') >= 0 && id.indexOf('label') >= 0);
+          roadLabelIds[id] ||
+          idLower.indexOf('highway-name') === 0 ||
+          (idLower.indexOf('highway') >= 0 && idLower.indexOf('name') >= 0) ||
+          (idLower.indexOf('road') >= 0 && (idLower.indexOf('label') >= 0 || idLower.indexOf('name') >= 0)) ||
+          idLower.indexOf('transportation_name') >= 0;
         if (!isRoadLabel) continue;
         try {
-          var current = map.getLayoutProperty(layer.id, 'text-size');
+          var current = map.getLayoutProperty(id, 'text-size');
           if (current == null) continue;
-          if (typeof current === 'number') {
-            map.setLayoutProperty(layer.id, 'text-size', current * scale);
-          } else if (Array.isArray(current)) {
-            map.setLayoutProperty(layer.id, 'text-size', ['*', current, scale]);
-          }
+          // Explicit size so the slider has a clear visible effect
+          var base = 12;
+          map.setLayoutProperty(id, 'text-size', Math.round(base * scale));
           try {
-            map.setPaintProperty(layer.id, 'text-halo-width', 2.0);
-            map.setPaintProperty(layer.id, 'text-halo-color', '#ffffff');
+            map.setPaintProperty(id, 'text-halo-width', Math.min(2.5, 0.8 * scale));
+            map.setPaintProperty(id, 'text-halo-color', '#ffffff');
           } catch (e2) {}
           try {
-            map.setLayoutProperty(layer.id, 'text-font', ['Noto Sans Bold', 'Noto Sans Regular']);
+            map.setLayoutProperty(id, 'text-font', ['Noto Sans Bold', 'Noto Sans Regular']);
           } catch (e3) {}
+          try {
+            map.setLayoutProperty(id, 'text-padding', 2);
+            map.setLayoutProperty(id, 'symbol-spacing', 150);
+          } catch (e4) {}
         } catch (e) {}
       }
     }
@@ -478,8 +486,6 @@
     async function renderPageToCanvas(page, widthPx, heightPx, labelScale) {
       var map = await ensureRenderMap(widthPx, heightPx, labelScale);
       map.resize();
-      // Exact center + zoom so adjacent pages share edges without overlap.
-      // (fitBounds expands the view when aspect ratios differ, causing overlap.)
       var centerLon = (page.west + page.east) / 2;
       var centerLat = (page.south + page.north) / 2;
       var lonSpan = page.east - page.west;
@@ -574,7 +580,8 @@
           'Coverage: ' + (coverW / 1609.344).toFixed(2) + ' mi x ' + (coverH / 1609.344).toFixed(2) + ' mi' +
           (unit === 'km' ? ' (' + (coverW / 1000).toFixed(2) + ' x ' + (coverH / 1000).toFixed(2) + ' km)' : '') +
           (clipped ? '\nCoverage clipped to fit max pages.' : '') +
-          '\nRendering page 1 (canvas ' + mapPxW + 'x' + mapPxH + ')...'
+          '\nStreet name size: ' + labelScale.toFixed(1) + 'x\n' +
+          'Rendering page 1 (canvas ' + mapPxW + 'x' + mapPxH + ')...'
         );
 
         var pages = [];
@@ -595,7 +602,7 @@
           setStatus(
             'Rendering page ' + (pi + 1) + ' of ' + pages.length +
             ' (row ' + (page.row + 1) + ', col ' + (page.col + 1) + ')...\n' +
-            'Loading vector tiles...'
+            'Street names at ' + labelScale.toFixed(1) + 'x'
           );
           setProgress(5 + (pi / pages.length) * 80);
 
@@ -682,7 +689,7 @@
         pdf.save(fname);
         setStatus(
           'Done! Saved ' + fname + '\n' +
-          pageCanvases.length + ' pages with enlarged street names.\n' +
+          pageCanvases.length + ' pages with street names at ' + labelScale.toFixed(1) + 'x.\n' +
           'Print at 100% scale and tape together using the row/col labels.' +
           (clipped ? '\nNote: coverage was reduced to fit the page limit.' : ''),
           clipped ? 'warn' : 'ok'
@@ -707,7 +714,6 @@
     function updateLabelScalePreview() {
       var v = parseFloat(document.getElementById('labelScale').value);
       document.getElementById('labelScaleValue').textContent = v.toFixed(1) + '×';
-      // Map 1.5–6.0 → ~0.7rem–1.9rem sample text
       var rem = 0.55 + (v - 1.5) * (1.4 / 4.5);
       document.getElementById('labelScaleSample').style.fontSize = rem.toFixed(2) + 'rem';
     }
