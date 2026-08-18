@@ -349,7 +349,7 @@
         'wetland', 'glacier', 'sand', 'pitch', 'garden', 'allotments',
         'cemetery', 'orchard', 'vineyard', 'farmland', 'farm',
         'water', 'ocean', 'river', 'lake', 'waterway', 'basin',
-        'reservoir', 'dock', 'swimming', 'background'
+        'reservoir', 'dock', 'swimming'
       ];
       for (var i = 0; i < style.layers.length; i++) {
         var layer = style.layers[i];
@@ -386,42 +386,26 @@
     function enlargeRoadLabels(map, scale) {
       var style = map.getStyle();
       if (!style || !style.layers) return;
-      // OpenFreeMap liberty uses: highway-name-path / -minor / -major
-      var roadLabelIds = {
-        'highway-name-path': true,
-        'highway-name-minor': true,
-        'highway-name-major': true
-      };
-      for (var i = 0; i < style.layers.length; i++) {
-        var layer = style.layers[i];
-        if (layer.type !== 'symbol') continue;
-        var id = layer.id;
-        var idLower = id.toLowerCase();
-        var isRoadLabel =
-          roadLabelIds[id] ||
-          idLower.indexOf('highway-name') === 0 ||
-          (idLower.indexOf('highway') >= 0 && idLower.indexOf('name') >= 0) ||
-          (idLower.indexOf('road') >= 0 && (idLower.indexOf('label') >= 0 || idLower.indexOf('name') >= 0)) ||
-          idLower.indexOf('transportation_name') >= 0;
-        if (!isRoadLabel) continue;
+      var targets = ['highway-name-path', 'highway-name-minor', 'highway-name-major'];
+      for (var t = 0; t < targets.length; t++) {
+        var id = targets[t];
+        if (!map.getLayer(id)) continue;
         try {
-          var current = map.getLayoutProperty(id, 'text-size');
-          if (current == null) continue;
-          // Explicit size so the slider has a clear visible effect
-          var base = 12;
-          map.setLayoutProperty(id, 'text-size', Math.round(base * scale));
-          try {
-            map.setPaintProperty(id, 'text-halo-width', Math.min(2.5, 0.8 * scale));
-            map.setPaintProperty(id, 'text-halo-color', '#ffffff');
-          } catch (e2) {}
-          try {
-            map.setLayoutProperty(id, 'text-font', ['Noto Sans Bold', 'Noto Sans Regular']);
-          } catch (e3) {}
-          try {
-            map.setLayoutProperty(id, 'text-padding', 2);
-            map.setLayoutProperty(id, 'symbol-spacing', 150);
-          } catch (e4) {}
-        } catch (e) {}
+          map.setLayoutProperty(id, 'text-size', [
+            'interpolate', ['linear'], ['zoom'],
+            13, 12 * scale,
+            14, 13 * scale,
+            16, 14 * scale,
+            18, 16 * scale
+          ]);
+          map.setLayoutProperty(id, 'text-font', ['Noto Sans Regular']);
+          map.setPaintProperty(id, 'text-halo-width', Math.min(2.5, 0.6 * scale));
+          map.setPaintProperty(id, 'text-halo-color', '#ffffff');
+          map.setPaintProperty(id, 'text-color', '#111111');
+          map.setLayoutProperty(id, 'visibility', 'visible');
+        } catch (e) {
+          console.warn('label style', id, e);
+        }
       }
     }
 
@@ -489,8 +473,10 @@
       var centerLon = (page.west + page.east) / 2;
       var centerLat = (page.south + page.north) / 2;
       var lonSpan = page.east - page.west;
-      var zoom = Math.log2((widthPx * 360) / (lonSpan * 256));
+      var zoom = Math.log2((widthPx * 360) / (lonSpan * 512));
+      if (!isFinite(zoom)) zoom = 15;
       map.jumpTo({ center: [centerLon, centerLat], zoom: zoom });
+      enlargeRoadLabels(map, labelScale);
       await waitForIdle(map, 15000);
 
       var canvas = map.getCanvas();
