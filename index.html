@@ -81,10 +81,11 @@
       <label for="mapExtent">Map extent (zoom)</label>
       <select id="mapExtent">
         <option value="14.5">Wider — more area per page</option>
-        <option value="15.5" selected>Balanced</option>
-        <option value="16.5">Closer — more detail per page</option>
+        <option value="15.5">Balanced</option>
+        <option value="16.2" selected>Closer — neighborhood streets</option>
+        <option value="16.8">Closest — block detail</option>
       </select>
-      <p class="hint">Wider zooms out so each printed page covers more ground. Street names stay enlarged.</p>
+      <p class="hint">Closer defaults so residential streets are named. Wider zooms out for more area per page.</p>
       <label for="labelScale">Street name size</label>
       <div class="slider-row">
         <input id="labelScale" type="range" min="1.0" max="2.5" step="0.05" value="1.5" />
