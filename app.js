@@ -7,7 +7,7 @@
   const MAX_CANVAS_SIDE = 1600;
   const ISO_RAYS = 16;
   const ROAD_LABEL_LAYERS = ['highway-name-path', 'highway-name-minor', 'highway-name-major'];
-  const MARGIN_MM = 12, HEADER_MM = 14, FOOTER_MM = 18;
+  const MARGIN_MM = 12, HEADER_MM = 16, FOOTER_MM = 18;
   let cancelled = false, renderMap = null;
 
   function setStatus(msg, type) {
@@ -121,10 +121,37 @@
     var z = Math.max(zLon, zLat);
     return isFinite(z) ? z : 15;
   }
+  function pageContainsPoint(page, lon, lat) {
+    var eps = 1e-9;
+    return lon >= page.west - eps && lon <= page.east + eps &&
+           lat >= page.south - eps && lat <= page.north + eps;
+  }
+  function addHomeMarker(map, lon, lat) {
+    try {
+      if (map.getSource('home-pt')) {
+        if (map.getLayer('home-label')) map.removeLayer('home-label');
+        if (map.getLayer('home-circle')) map.removeLayer('home-circle');
+        map.removeSource('home-pt');
+      }
+    } catch (e) {}
+    map.addSource('home-pt', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} }
+    });
+    map.addLayer({
+      id: 'home-circle', type: 'circle', source: 'home-pt',
+      paint: { 'circle-radius': 10, 'circle-color': '#e11d48', 'circle-stroke-width': 3, 'circle-stroke-color': '#ffffff' }
+    });
+    map.addLayer({
+      id: 'home-label', type: 'symbol', source: 'home-pt',
+      layout: { 'text-field': 'HOME', 'text-size': 16, 'text-offset': [0, 1.35], 'text-font': ['Noto Sans Regular'], 'text-anchor': 'top' },
+      paint: { 'text-color': '#be123c', 'text-halo-color': '#ffffff', 'text-halo-width': 2 }
+    });
+  }
   async function geocode(address) {
     var url = new URL('https://nominatim.openstreetmap.org/search');
     url.searchParams.set('q', address); url.searchParams.set('format', 'json'); url.searchParams.set('limit', '1');
-    var res = await fetch(url.toString(), { headers: { Accept: 'application/json', 'User-Agent': 'PrintableMapPDF/3.1 (travel-distance printable map)' } });
+    var res = await fetch(url.toString(), { headers: { Accept: 'application/json', 'User-Agent': 'PrintableMapPDF/3.2 (travel-distance printable map)' } });
     if (!res.ok) throw new Error('Geocoding failed (' + res.status + ').');
     var data = await res.json();
     if (!data || !data.length) throw new Error('Address not found.');
@@ -147,24 +174,13 @@
     try { if (map.getLayer('background')) { map.setPaintProperty('background', 'background-color', '#ffffff'); map.setLayoutProperty('background', 'visibility', 'visible'); } } catch (e) {}
   }
   function applyRoadLabelScale(map, scale) {
-    var minByLayer = {
-      'highway-name-path': 13,
-      'highway-name-minor': 13,
-      'highway-name-major': 12
-    };
+    var minByLayer = { 'highway-name-path': 13, 'highway-name-minor': 13, 'highway-name-major': 12 };
     for (var t = 0; t < ROAD_LABEL_LAYERS.length; t++) {
       var id = ROAD_LABEL_LAYERS[t]; if (!map.getLayer(id)) continue;
       try {
         var minz = minByLayer[id] != null ? minByLayer[id] : 13;
         try { map.setLayerZoomRange(id, minz, 24); } catch (eZ) {}
-        map.setLayoutProperty(id, 'text-size', ['interpolate', ['linear'], ['zoom'],
-          12, 12 * scale,
-          13, 13 * scale,
-          14, 14 * scale,
-          15, 15 * scale,
-          16, 15 * scale,
-          18, 14 * scale
-        ]);
+        map.setLayoutProperty(id, 'text-size', ['interpolate', ['linear'], ['zoom'], 12, 12 * scale, 13, 13 * scale, 14, 14 * scale, 15, 15 * scale, 16, 15 * scale, 18, 14 * scale]);
         map.setLayoutProperty(id, 'text-font', ['Noto Sans Regular']);
         map.setLayoutProperty(id, 'text-padding', 1);
         map.setLayoutProperty(id, 'symbol-spacing', 100);
@@ -196,7 +212,7 @@
     });
     return renderMap;
   }
-  async function renderPage(page, widthPx, heightPx, labelScale) {
+  async function renderPage(page, widthPx, heightPx, labelScale, homeLon, homeLat) {
     var map = await createMap(widthPx, heightPx);
     map.resize();
     simplifyStyleForPrint(map);
@@ -208,6 +224,9 @@
     var zoom = zoomForPage(widthPx, heightPx, lonSpan, latSpan);
     map.jumpTo({ center: [centerLon, centerLat], zoom: zoom });
     applyRoadLabelScale(map, labelScale);
+    if (homeLon != null && pageContainsPoint(page, homeLon, homeLat)) {
+      addHomeMarker(map, homeLon, homeLat);
+    }
     await waitForIdle(map, 15000);
     var canvas = map.getCanvas();
     if (!canvas || canvas.width < 10) throw new Error('Map canvas empty — WebGL may be unavailable on this device.');
@@ -220,8 +239,7 @@
     var cw = Math.max(1, x1 - x0);
     var ch = Math.max(1, y1 - y0);
     var out = document.createElement('canvas');
-    out.width = cw;
-    out.height = ch;
+    out.width = cw; out.height = ch;
     var ctx = out.getContext('2d');
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, cw, ch);
@@ -240,7 +258,13 @@
       pdf.setFontSize(9); pdf.setTextColor(40);
       pdf.text('Road Map - ' + place.display.split(',').slice(0, 2).join(','), mapX, mapArea.margin + 5);
       pdf.setFontSize(8); pdf.setTextColor(100);
-      pdf.text('Page ' + (i + 1) + ' of ' + pageCanvases.length + '  |  Row ' + (item.page.row + 1) + '/' + grid.rows + '  Col ' + (item.page.col + 1) + '/' + grid.cols, mapX, mapArea.margin + 10);
+      var pageLabel = 'Page ' + (i + 1) + ' of ' + pageCanvases.length + '  |  Row ' + (item.page.row + 1) + '/' + grid.rows + '  Col ' + (item.page.col + 1) + '/' + grid.cols;
+      if (item.page.hasHome) pageLabel += '  |  * HOME';
+      pdf.text(pageLabel, mapX, mapArea.margin + 10);
+      if (item.page.hasHome) {
+        pdf.setFontSize(9); pdf.setTextColor(190, 18, 60);
+        pdf.text('* Home / start address is on this page', mapX, mapArea.margin + 14);
+      }
       pdf.addImage(imgData, 'JPEG', mapX, mapY, mapArea.widthMm, mapArea.heightMm);
       pdf.setDrawColor(180); pdf.setLineWidth(0.2); pdf.rect(mapX, mapY, mapArea.widthMm, mapArea.heightMm);
       pdf.setDrawColor(0); pdf.setLineWidth(0.3);
@@ -294,32 +318,32 @@
       var totalW = pageWidthM * grid.cols, totalH = pageHeightM * grid.rows;
       var travelW = (coverage.bbox.east - coverage.bbox.west) * mpd.lon;
       var travelH = (coverage.bbox.north - coverage.bbox.south) * mpd.lat;
-      var coverW, coverH, clipped;
-      if (travelW <= totalW * 1.02 && travelH <= totalH * 1.02) {
-        coverW = totalW;
-        coverH = totalH;
-        clipped = false;
-      } else {
-        coverW = Math.min(travelW, totalW);
-        coverH = Math.min(travelH, totalH);
-        clipped = coverW < travelW * 0.98 || coverH < travelH * 0.98;
-      }
+      var coverW = Math.min(Math.max(travelW, pageWidthM), totalW);
+      var coverH = Math.min(Math.max(travelH, pageHeightM), totalH);
+      coverW = Math.max(coverW, pageWidthM);
+      coverH = Math.max(coverH, pageHeightM);
+      var clipped = coverW < travelW * 0.98 || coverH < travelH * 0.98;
       var coverBbox = {
         west: place.lon - (coverW / 2) / mpd.lon, east: place.lon + (coverW / 2) / mpd.lon,
         south: place.lat - (coverH / 2) / mpd.lat, north: place.lat + (coverH / 2) / mpd.lat
       };
       var scaleDenom = Math.round(mpp * targetDpi * 39.3701);
       var pages = buildPageGrid(coverBbox, grid);
-      setStatus('Center: ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '\n' + travelLabel + '\nGrid: ' + grid.rows + 'x' + grid.cols + ' = ' + grid.pages + ' pages\nCoverage: ' + (coverW / 1609.344).toFixed(2) + ' mi x ' + (coverH / 1609.344).toFixed(2) + ' mi' + (unit === 'km' ? ' (' + (coverW / 1000).toFixed(2) + ' x ' + (coverH / 1000).toFixed(2) + ' km)' : '') + (clipped ? '\nCoverage clipped to fit max pages.' : '') + '\nStreet name size: ' + labelScale.toFixed(2) + 'x\nRendering...');
+      var homePageNums = [];
+      for (var hi = 0; hi < pages.length; hi++) {
+        if (pageContainsPoint(pages[hi], place.lon, place.lat)) homePageNums.push(hi + 1);
+      }
+      setStatus('Center: ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '\n' + travelLabel + '\nGrid: ' + grid.rows + 'x' + grid.cols + ' = ' + grid.pages + ' pages\nHome is on page(s): ' + (homePageNums.length ? homePageNums.join(', ') : 'ERROR') + '\nCoverage: ' + (coverW / 1609.344).toFixed(2) + ' mi x ' + (coverH / 1609.344).toFixed(2) + ' mi' + (clipped ? '\nCoverage clipped to fit max pages.' : '') + '\nRendering...');
       var pageCanvases = [];
       for (var pi = 0; pi < pages.length; pi++) {
         if (cancelled) throw new Error('Cancelled');
         var page = pages[pi];
-        setStatus('Rendering page ' + (pi + 1) + ' of ' + pages.length + ' (row ' + (page.row + 1) + ', col ' + (page.col + 1) + ')...\n' + travelLabel);
+        setStatus('Rendering page ' + (pi + 1) + ' of ' + pages.length + ' (row ' + (page.row + 1) + ', col ' + (page.col + 1) + ')...\n' + travelLabel + (pageContainsPoint(page, place.lon, place.lat) ? '\n(This page contains HOME)' : ''));
         setProgress(8 + (pi / pages.length) * 80);
-        var canvas = await renderPage(page, mapPxW, mapPxH, labelScale);
+        var canvas = await renderPage(page, mapPxW, mapPxH, labelScale, place.lon, place.lat);
+        page.hasHome = pageContainsPoint(page, place.lon, place.lat);
         pageCanvases.push({ canvas: canvas, page: page });
-        if (pi === 0) {
+        if (pi === 0 || page.hasHome) {
           var preview = document.getElementById('previewCanvas'), pctx = preview.getContext('2d');
           var sc = Math.min(1, 680 / canvas.width);
           preview.width = Math.round(canvas.width * sc); preview.height = Math.round(canvas.height * sc);
@@ -333,7 +357,7 @@
       setProgress(100);
       var fname = 'road-map_' + place.lat.toFixed(4) + '_' + place.lon.toFixed(4) + '_' + grid.rows + 'x' + grid.cols + '.pdf';
       pdf.save(fname);
-      setStatus('Done! Saved ' + fname + '\n' + pageCanvases.length + ' pages · ' + travelLabel + '\nPrint at 100% scale and tape together using the row/col labels.' + (clipped ? '\nNote: coverage was reduced to fit the page limit.' : ''), clipped ? 'warn' : 'ok');
+      setStatus('Done! Saved ' + fname + '\n' + pageCanvases.length + ' pages · ' + travelLabel + '\nHome is on page(s): ' + homePageNums.join(', ') + ' (look for red HOME marker)\nPrint at 100% scale and tape together using the row/col labels.' + (clipped ? '\nNote: coverage was reduced to fit the page limit.' : ''), clipped ? 'warn' : 'ok');
     } catch (err) {
       if (err.message === 'Cancelled') setStatus('Cancelled.', 'warn');
       else { console.error(err); setStatus('Error: ' + err.message, 'error'); }
