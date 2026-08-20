@@ -147,20 +147,27 @@
     try { if (map.getLayer('background')) { map.setPaintProperty('background', 'background-color', '#ffffff'); map.setLayoutProperty('background', 'visibility', 'visible'); } } catch (e) {}
   }
   function applyRoadLabelScale(map, scale) {
+    var minByLayer = {
+      'highway-name-path': 13,
+      'highway-name-minor': 13,
+      'highway-name-major': 12
+    };
     for (var t = 0; t < ROAD_LABEL_LAYERS.length; t++) {
       var id = ROAD_LABEL_LAYERS[t]; if (!map.getLayer(id)) continue;
       try {
+        var minz = minByLayer[id] != null ? minByLayer[id] : 13;
+        try { map.setLayerZoomRange(id, minz, 24); } catch (eZ) {}
         map.setLayoutProperty(id, 'text-size', ['interpolate', ['linear'], ['zoom'],
-          12, 13 * scale,
-          13, 14 * scale,
-          14, 15 * scale,
+          12, 12 * scale,
+          13, 13 * scale,
+          14, 14 * scale,
           15, 15 * scale,
-          16, 14 * scale,
+          16, 15 * scale,
           18, 14 * scale
         ]);
         map.setLayoutProperty(id, 'text-font', ['Noto Sans Regular']);
         map.setLayoutProperty(id, 'text-padding', 1);
-        map.setLayoutProperty(id, 'symbol-spacing', 120);
+        map.setLayoutProperty(id, 'symbol-spacing', 100);
         map.setLayoutProperty(id, 'visibility', 'visible');
         map.setPaintProperty(id, 'text-color', '#111111');
         map.setPaintProperty(id, 'text-halo-color', '#ffffff');
@@ -263,7 +270,7 @@
       var maxPages = Math.max(1, Math.min(36, parseInt(document.getElementById('maxPages').value, 10) || 9));
       var paper = document.getElementById('paper').value, orient = document.getElementById('orient').value;
       var targetDpi = parseInt(document.getElementById('dpi').value, 10), labelScale = parseFloat(document.getElementById('labelScale').value);
-      var planZoom = parseFloat(document.getElementById('mapExtent').value) || 15.5;
+      var planZoom = parseFloat(document.getElementById('mapExtent').value) || 16.2;
       var maxMeters = travelToMeters(travelVal, unit);
       var modeLabel = mode === 'driving' ? 'driving' : mode === 'cycling' ? 'cycling' : 'walking';
       var travelLabel = 'Travel distance: ' + travelVal + ' ' + unit + ' (' + modeLabel + ')';
