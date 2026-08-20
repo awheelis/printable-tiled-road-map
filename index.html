@@ -1,2 +1,105 @@
 <!DOCTYPE html>
-<!-- see repo for full app: mapExtent + crop + travel distance -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Printable Tiled Road Map PDF</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <style>
+    :root {
+      --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #f1f5f9;
+      --muted: #94a3b8; --accent: #38bdf8; --accent-hover: #0ea5e9;
+      --success: #22c55e; --warn: #f59e0b; --error: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; min-height: 100vh; padding: 1.5rem; }
+    .container { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); margin-bottom: 1.75rem; font-size: 0.95rem; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.25rem; }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+    input, select { width: 100%; padding: 0.6rem 0.75rem; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; color: var(--text); font-size: 1rem; margin-bottom: 1rem; }
+    input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+    button { width: 100%; padding: 0.85rem 1.25rem; border: none; border-radius: 8px; background: var(--accent); color: #0f172a; font-weight: 600; font-size: 1rem; cursor: pointer; }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); margin-top: 0.75rem; }
+    .btn-secondary:hover:not(:disabled) { background: #334155; }
+    #status { margin-top: 1rem; padding: 0.85rem 1rem; border-radius: 8px; background: #0f172a; border: 1px solid var(--border); font-size: 0.9rem; min-height: 3.2rem; white-space: pre-wrap; }
+    .status-ok { border-color: var(--success); }
+    .status-warn { border-color: var(--warn); }
+    .status-error { border-color: var(--error); }
+    .progress-bar { height: 6px; background: #334155; border-radius: 3px; margin-top: 0.75rem; overflow: hidden; display: none; }
+    .progress-bar > div { height: 100%; background: var(--accent); width: 0%; transition: width 0.2s; }
+    .hint { font-size: 0.8rem; color: var(--muted); margin-top: -0.5rem; margin-bottom: 1rem; }
+    .preview-wrap { margin-top: 1rem; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: #0f172a; min-height: 180px; display: none; }
+    #previewCanvas { width: 100%; display: block; }
+    footer { margin-top: 2rem; font-size: 0.8rem; color: var(--muted); text-align: center; }
+    a { color: var(--accent); }
+    #mapCapture { position: fixed; left: -9999px; top: 0; width: 800px; height: 600px; visibility: hidden; pointer-events: none; }
+    input[type="range"] { width: 100%; padding: 0; margin-bottom: 0; accent-color: var(--accent); height: 1.5rem; cursor: pointer; }
+    .slider-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.35rem; }
+    .slider-row input[type="range"] { flex: 1; }
+    .size-preview { font-weight: 700; color: var(--text); white-space: nowrap; min-width: 7rem; text-align: right; line-height: 1.2; }
+    .size-preview .sample { display: block; color: var(--accent); margin-top: 0.15rem; }
+    @media (max-width: 560px) { .row, .row-3 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Printable Tiled Road Map PDF</h1>
+    <p class="subtitle">Multi-page printable road maps based on <strong>travel distance</strong> along the road network. Print, then tape pages together.</p>
+    <div class="card">
+      <label for="address">Address or place name</label>
+      <input id="address" type="text" placeholder="e.g. 1600 Amphitheatre Parkway, Mountain View, CA" />
+      <div class="row-3">
+        <div>
+          <label for="travelDist">Travel distance</label>
+          <input id="travelDist" type="number" min="0.1" step="0.1" value="1.5" />
+        </div>
+        <div>
+          <label for="unit">Unit</label>
+          <select id="unit"><option value="mi" selected>Miles</option><option value="km">Kilometers</option></select>
+        </div>
+        <div>
+          <label for="mode">Travel mode</label>
+          <select id="mode"><option value="driving" selected>Driving</option><option value="cycling">Cycling</option><option value="walking">Walking</option></select>
+        </div>
+      </div>
+      <p class="hint">Minimum area reachable by road. Map extent can zoom out further for more context.</p>
+      <div class="row-3">
+        <div><label for="maxPages">Max pages</label><input id="maxPages" type="number" min="1" max="36" value="9" /></div>
+        <div><label for="paper">Paper size</label><select id="paper"><option value="letter" selected>Letter (8.5x11")</option><option value="a4">A4 (210x297 mm)</option></select></div>
+        <div><label for="orient">Orientation</label><select id="orient"><option value="landscape" selected>Landscape</option><option value="portrait">Portrait</option></select></div>
+      </div>
+      <label for="dpi">Print DPI</label>
+      <select id="dpi"><option value="150">150 (faster)</option><option value="180" selected>180 (balanced)</option><option value="200">200 (sharper)</option><option value="250">250 (high quality)</option></select>
+      <label for="mapExtent">Map extent (zoom)</label>
+      <select id="mapExtent">
+        <option value="14.5">Wider — more area per page</option>
+        <option value="15.5" selected>Balanced</option>
+        <option value="16.5">Closer — more detail per page</option>
+      </select>
+      <p class="hint">Wider zooms out so each printed page covers more ground. Street names stay enlarged.</p>
+      <label for="labelScale">Street name size</label>
+      <div class="slider-row">
+        <input id="labelScale" type="range" min="1.0" max="2.5" step="0.05" value="1.5" />
+        <div class="size-preview"><span id="labelScaleValue">1.50x</span><span class="sample" id="labelScaleSample" style="font-size: 0.95rem;">Main St</span></div>
+      </div>
+      <p class="hint">Default 1.5x usually looks best. Larger sizes hide more names (label collision).</p>
+      <button id="generateBtn">Generate PDF</button>
+      <button id="cancelBtn" class="btn-secondary" style="display:none">Cancel</button>
+      <div id="status">Ready. Enter an address and click Generate.</div>
+      <div class="progress-bar" id="progressWrap"><div id="progressBar"></div></div>
+      <div class="preview-wrap" id="previewWrap"><canvas id="previewCanvas"></canvas></div>
+    </div>
+    <footer>Map data (c) <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors. Routing via <a href="http://project-osrm.org/" target="_blank" rel="noopener">OSRM</a>. Vector tiles by <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>.</footer>
+  </div>
+  <div id="mapCapture"></div>
+  <script src="./app.js"></script>
+</body>
+</html>
