@@ -121,10 +121,25 @@
     var z = Math.max(zLon, zLat);
     return isFinite(z) ? z : 15;
   }
-  function pageContainsPoint(page, lon, lat) {
-    var eps = 1e-9;
-    return lon >= page.west - eps && lon <= page.east + eps &&
-           lat >= page.south - eps && lat <= page.north + eps;
+  function pageContainsPoint(page, lon, lat, grid) {
+    var lastCol = grid ? page.col === grid.cols - 1 : true;
+    var lastRow = grid ? page.row === grid.rows - 1 : true;
+    var inLon = lon >= page.west && (lastCol ? lon <= page.east : lon < page.east);
+    var inLat = lat >= page.south && (lastRow ? lat <= page.north : lat < page.north);
+    return inLon && inLat;
+  }
+  function assignHomePageIndex(pages, lon, lat, grid) {
+    for (var i = 0; i < pages.length; i++) {
+      if (pageContainsPoint(pages[i], lon, lat, grid)) return i;
+    }
+    var best = 0, bestD = Infinity;
+    for (var j = 0; j < pages.length; j++) {
+      var p = pages[j];
+      var cx = (p.west + p.east) / 2, cy = (p.south + p.north) / 2;
+      var d = (cx - lon) * (cx - lon) + (cy - lat) * (cy - lat);
+      if (d < bestD) { bestD = d; best = j; }
+    }
+    return best;
   }
   function addHomeMarker(map, lon, lat) {
     try {
@@ -224,7 +239,7 @@
     var zoom = zoomForPage(widthPx, heightPx, lonSpan, latSpan);
     map.jumpTo({ center: [centerLon, centerLat], zoom: zoom });
     applyRoadLabelScale(map, labelScale);
-    if (homeLon != null && pageContainsPoint(page, homeLon, homeLat)) {
+    if (page.hasHome) {
       addHomeMarker(map, homeLon, homeLat);
     }
     await waitForIdle(map, 15000);
@@ -329,19 +344,17 @@
       };
       var scaleDenom = Math.round(mpp * targetDpi * 39.3701);
       var pages = buildPageGrid(coverBbox, grid);
-      var homePageNums = [];
-      for (var hi = 0; hi < pages.length; hi++) {
-        if (pageContainsPoint(pages[hi], place.lon, place.lat)) homePageNums.push(hi + 1);
-      }
-      setStatus('Center: ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '\n' + travelLabel + '\nGrid: ' + grid.rows + 'x' + grid.cols + ' = ' + grid.pages + ' pages\nHome is on page(s): ' + (homePageNums.length ? homePageNums.join(', ') : 'ERROR') + '\nCoverage: ' + (coverW / 1609.344).toFixed(2) + ' mi x ' + (coverH / 1609.344).toFixed(2) + ' mi' + (clipped ? '\nCoverage clipped to fit max pages.' : '') + '\nRendering...');
+      var homeIdx = assignHomePageIndex(pages, place.lon, place.lat, grid);
+      for (var hi = 0; hi < pages.length; hi++) pages[hi].hasHome = (hi === homeIdx);
+      var homePageNums = [homeIdx + 1];
+      setStatus('Center: ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '\n' + travelLabel + '\nGrid: ' + grid.rows + 'x' + grid.cols + ' = ' + grid.pages + ' pages\nHome is on page: ' + homePageNums[0] + '\nCoverage: ' + (coverW / 1609.344).toFixed(2) + ' mi x ' + (coverH / 1609.344).toFixed(2) + ' mi' + (clipped ? '\nCoverage clipped to fit max pages.' : '') + '\nRendering...');
       var pageCanvases = [];
       for (var pi = 0; pi < pages.length; pi++) {
         if (cancelled) throw new Error('Cancelled');
         var page = pages[pi];
-        setStatus('Rendering page ' + (pi + 1) + ' of ' + pages.length + ' (row ' + (page.row + 1) + ', col ' + (page.col + 1) + ')...\n' + travelLabel + (pageContainsPoint(page, place.lon, place.lat) ? '\n(This page contains HOME)' : ''));
+        setStatus('Rendering page ' + (pi + 1) + ' of ' + pages.length + ' (row ' + (page.row + 1) + ', col ' + (page.col + 1) + ')...\n' + travelLabel + (page.hasHome ? '\n(This page contains HOME)' : ''));
         setProgress(8 + (pi / pages.length) * 80);
         var canvas = await renderPage(page, mapPxW, mapPxH, labelScale, place.lon, place.lat);
-        page.hasHome = pageContainsPoint(page, place.lon, place.lat);
         pageCanvases.push({ canvas: canvas, page: page });
         if (pi === 0 || page.hasHome) {
           var preview = document.getElementById('previewCanvas'), pctx = preview.getContext('2d');
@@ -357,7 +370,7 @@
       setProgress(100);
       var fname = 'road-map_' + place.lat.toFixed(4) + '_' + place.lon.toFixed(4) + '_' + grid.rows + 'x' + grid.cols + '.pdf';
       pdf.save(fname);
-      setStatus('Done! Saved ' + fname + '\n' + pageCanvases.length + ' pages · ' + travelLabel + '\nHome is on page(s): ' + homePageNums.join(', ') + ' (look for red HOME marker)\nPrint at 100% scale and tape together using the row/col labels.' + (clipped ? '\nNote: coverage was reduced to fit the page limit.' : ''), clipped ? 'warn' : 'ok');
+      setStatus('Done! Saved ' + fname + '\n' + pageCanvases.length + ' pages · ' + travelLabel + '\nHome is on page: ' + homePageNums[0] + ' (look for red HOME marker)\nPrint at 100% scale and tape together using the row/col labels.' + (clipped ? '\nNote: coverage was reduced to fit the page limit.' : ''), clipped ? 'warn' : 'ok');
     } catch (err) {
       if (err.message === 'Cancelled') setStatus('Cancelled.', 'warn');
       else { console.error(err); setStatus('Error: ' + err.message, 'error'); }
