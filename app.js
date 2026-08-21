@@ -99,47 +99,61 @@
   function mapAreaMm(paper) {
     return { widthMm: paper.widthMm - 2 * MARGIN_MM, heightMm: paper.heightMm - MARGIN_MM - HEADER_MM - FOOTER_MM, margin: MARGIN_MM, header: HEADER_MM, footer: FOOTER_MM };
   }
-  function chooseGrid(maxPages) {
-    var maxSide = Math.ceil(Math.sqrt(maxPages)), best = { rows: 1, cols: 1, pages: 1 };
-    for (var r = 1; r <= maxSide; r++) for (var c = 1; c <= maxSide; c++) {
-      var p = r * c; if (p > maxPages) continue;
-      if (p > best.pages || (p === best.pages && Math.abs(r - c) < Math.abs(best.rows - best.cols))) best = { rows: r, cols: c, pages: p };
-    }
-    return best;
-  }
-  function buildPageGrid(coverBbox, grid) {
-    var lonSpan = (coverBbox.east - coverBbox.west) / grid.cols, latSpan = (coverBbox.north - coverBbox.south) / grid.rows, pages = [];
-    for (var row = 0; row < grid.rows; row++) for (var col = 0; col < grid.cols; col++) {
-      var north = coverBbox.north - row * latSpan, south = north - latSpan, west = coverBbox.west + col * lonSpan, east = west + lonSpan;
-      pages.push({ row: row, col: col, index: pages.length, north: north, south: south, west: west, east: east });
-    }
-    return pages;
-  }
   function zoomForPage(widthPx, heightPx, lonSpan, latSpan) {
     var zLon = Math.log2((widthPx * 360) / (lonSpan * WORLD_TILE_SIZE));
     var zLat = Math.log2((heightPx * 360) / (latSpan * WORLD_TILE_SIZE));
     var z = Math.max(zLon, zLat);
     return isFinite(z) ? z : 15;
   }
-  function pageContainsPoint(page, lon, lat, grid) {
-    var lastCol = grid ? page.col === grid.cols - 1 : true;
-    var lastRow = grid ? page.row === grid.rows - 1 : true;
-    var inLon = lon >= page.west && (lastCol ? lon <= page.east : lon < page.east);
-    var inLat = lat >= page.south && (lastRow ? lat <= page.north : lat < page.north);
-    return inLon && inLat;
+  function buildTravelTiles(place, travelBbox, pageWidthM, pageHeightM, mpd) {
+    var cellLon = pageWidthM / mpd.lon;
+    var cellLat = pageHeightM / mpd.lat;
+    if (!(cellLon > 0) || !(cellLat > 0)) throw new Error('Invalid page size — try a different DPI or map extent.');
+    var homeWest = place.lon - cellLon / 2;
+    var homeSouth = place.lat - cellLat / 2;
+    var minCol = Math.min(0, Math.floor((travelBbox.west - homeWest) / cellLon));
+    var maxCol = Math.max(0, Math.ceil((travelBbox.east - homeWest) / cellLon) - 1);
+    var minRow = Math.min(0, Math.floor((travelBbox.south - homeSouth) / cellLat));
+    var maxRow = Math.max(0, Math.ceil((travelBbox.north - homeSouth) / cellLat) - 1);
+    var tiles = [];
+    for (var row = minRow; row <= maxRow; row++) {
+      for (var col = minCol; col <= maxCol; col++) {
+        var west = homeWest + col * cellLon;
+        var east = west + cellLon;
+        var south = homeSouth + row * cellLat;
+        var north = south + cellLat;
+        var isHome = (col === 0 && row === 0);
+        tiles.push({ col: col, row: row, west: west, east: east, south: south, north: north, isHome: isHome, hasHome: isHome, dist: Math.sqrt(col * col + row * row) });
+      }
+    }
+    return tiles;
   }
-  function assignHomePageIndex(pages, lon, lat, grid) {
-    for (var i = 0; i < pages.length; i++) {
-      if (pageContainsPoint(pages[i], lon, lat, grid)) return i;
+  function selectConnectedPages(tiles, maxPages) {
+    maxPages = Math.max(1, maxPages);
+    var byKey = {};
+    for (var i = 0; i < tiles.length; i++) byKey[tiles[i].col + ',' + tiles[i].row] = tiles[i];
+    var home = null;
+    for (var h = 0; h < tiles.length; h++) if (tiles[h].isHome) { home = tiles[h]; break; }
+    if (!home) home = tiles[0];
+    var selected = [], visited = {}, queue = [home];
+    while (queue.length > 0 && selected.length < maxPages) {
+      queue.sort(function (a, b) {
+        if (a.dist !== b.dist) return a.dist - b.dist;
+        if (a.row !== b.row) return a.row - b.row;
+        return a.col - b.col;
+      });
+      var t = queue.shift();
+      var k = t.col + ',' + t.row;
+      if (visited[k]) continue;
+      visited[k] = true;
+      selected.push(t);
+      var neigh = [[t.col - 1, t.row], [t.col + 1, t.row], [t.col, t.row - 1], [t.col, t.row + 1]];
+      for (var n = 0; n < neigh.length; n++) {
+        var nk = neigh[n][0] + ',' + neigh[n][1];
+        if (!visited[nk] && byKey[nk]) queue.push(byKey[nk]);
+      }
     }
-    var best = 0, bestD = Infinity;
-    for (var j = 0; j < pages.length; j++) {
-      var p = pages[j];
-      var cx = (p.west + p.east) / 2, cy = (p.south + p.north) / 2;
-      var d = (cx - lon) * (cx - lon) + (cy - lat) * (cy - lat);
-      if (d < bestD) { bestD = d; best = j; }
-    }
-    return best;
+    return selected;
   }
   function addHomeMarker(map, lon, lat) {
     try {
@@ -149,24 +163,14 @@
         map.removeSource('home-pt');
       }
     } catch (e) {}
-    map.addSource('home-pt', {
-      type: 'geojson',
-      data: { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} }
-    });
-    map.addLayer({
-      id: 'home-circle', type: 'circle', source: 'home-pt',
-      paint: { 'circle-radius': 10, 'circle-color': '#e11d48', 'circle-stroke-width': 3, 'circle-stroke-color': '#ffffff' }
-    });
-    map.addLayer({
-      id: 'home-label', type: 'symbol', source: 'home-pt',
-      layout: { 'text-field': 'HOME', 'text-size': 16, 'text-offset': [0, 1.35], 'text-font': ['Noto Sans Regular'], 'text-anchor': 'top' },
-      paint: { 'text-color': '#be123c', 'text-halo-color': '#ffffff', 'text-halo-width': 2 }
-    });
+    map.addSource('home-pt', { type: 'geojson', data: { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} } });
+    map.addLayer({ id: 'home-circle', type: 'circle', source: 'home-pt', paint: { 'circle-radius': 10, 'circle-color': '#e11d48', 'circle-stroke-width': 3, 'circle-stroke-color': '#ffffff' } });
+    map.addLayer({ id: 'home-label', type: 'symbol', source: 'home-pt', layout: { 'text-field': 'HOME', 'text-size': 16, 'text-offset': [0, 1.35], 'text-font': ['Noto Sans Regular'], 'text-anchor': 'top' }, paint: { 'text-color': '#be123c', 'text-halo-color': '#ffffff', 'text-halo-width': 2 } });
   }
   async function geocode(address) {
     var url = new URL('https://nominatim.openstreetmap.org/search');
     url.searchParams.set('q', address); url.searchParams.set('format', 'json'); url.searchParams.set('limit', '1');
-    var res = await fetch(url.toString(), { headers: { Accept: 'application/json', 'User-Agent': 'PrintableMapPDF/3.2 (travel-distance printable map)' } });
+    var res = await fetch(url.toString(), { headers: { Accept: 'application/json', 'User-Agent': 'PrintableMapPDF/4.0 (travel-distance printable map)' } });
     if (!res.ok) throw new Error('Geocoding failed (' + res.status + ').');
     var data = await res.json();
     if (!data || !data.length) throw new Error('Address not found.');
@@ -239,9 +243,7 @@
     var zoom = zoomForPage(widthPx, heightPx, lonSpan, latSpan);
     map.jumpTo({ center: [centerLon, centerLat], zoom: zoom });
     applyRoadLabelScale(map, labelScale);
-    if (page.hasHome) {
-      addHomeMarker(map, homeLon, homeLat);
-    }
+    if (page.hasHome) addHomeMarker(map, homeLon, homeLat);
     await waitForIdle(map, 15000);
     var canvas = map.getCanvas();
     if (!canvas || canvas.width < 10) throw new Error('Map canvas empty — WebGL may be unavailable on this device.');
@@ -251,8 +253,7 @@
     var y0 = Math.max(0, Math.floor(Math.min(nw.y, se.y)));
     var x1 = Math.min(canvas.width, Math.ceil(Math.max(nw.x, se.x)));
     var y1 = Math.min(canvas.height, Math.ceil(Math.max(nw.y, se.y)));
-    var cw = Math.max(1, x1 - x0);
-    var ch = Math.max(1, y1 - y0);
+    var cw = Math.max(1, x1 - x0), ch = Math.max(1, y1 - y0);
     var out = document.createElement('canvas');
     out.width = cw; out.height = ch;
     var ctx = out.getContext('2d');
@@ -273,7 +274,7 @@
       pdf.setFontSize(9); pdf.setTextColor(40);
       pdf.text('Road Map - ' + place.display.split(',').slice(0, 2).join(','), mapX, mapArea.margin + 5);
       pdf.setFontSize(8); pdf.setTextColor(100);
-      var pageLabel = 'Page ' + (i + 1) + ' of ' + pageCanvases.length + '  |  Row ' + (item.page.row + 1) + '/' + grid.rows + '  Col ' + (item.page.col + 1) + '/' + grid.cols;
+      var pageLabel = 'Page ' + (i + 1) + ' of ' + pageCanvases.length + '  |  grid (' + item.page.col + ', ' + item.page.row + ')';
       if (item.page.hasHome) pageLabel += '  |  * HOME';
       pdf.text(pageLabel, mapX, mapArea.margin + 10);
       if (item.page.hasHome) {
@@ -291,7 +292,7 @@
       var footerY = pageH - mapArea.margin - 4;
       pdf.setFontSize(7); pdf.setTextColor(90);
       pdf.text('(c) OpenStreetMap / OpenFreeMap / OSRM  |  Center ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '  |  ~1:' + scaleDenom.toLocaleString() + '  |  Print at 100%', mapX, footerY);
-      pdf.text(travelLabel + (clipped ? ' (coverage clipped to max pages)' : ''), mapX, footerY + 3.5);
+      pdf.text(travelLabel + (clipped ? ' (max pages; travel area not fully covered)' : ''), mapX, footerY + 3.5);
     }
     return pdf;
   }
@@ -308,7 +309,8 @@
       var unit = document.getElementById('unit').value, mode = document.getElementById('mode').value;
       var maxPages = Math.max(1, Math.min(36, parseInt(document.getElementById('maxPages').value, 10) || 9));
       var paper = document.getElementById('paper').value, orient = document.getElementById('orient').value;
-      var targetDpi = parseInt(document.getElementById('dpi').value, 10), labelScale = parseFloat(document.getElementById('labelScale').value);
+      var targetDpi = parseInt(document.getElementById('dpi').value, 10);
+      var labelScale = parseFloat(document.getElementById('labelScale').value);
       var planZoom = parseFloat(document.getElementById('mapExtent').value) || 16.2;
       var maxMeters = travelToMeters(travelVal, unit);
       var modeLabel = mode === 'driving' ? 'driving' : mode === 'cycling' ? 'cycling' : 'walking';
@@ -320,8 +322,16 @@
       setProgress(3);
       var coverage = await computeTravelCoverage(place.lon, place.lat, maxMeters, mode);
       if (cancelled) return;
-      var paperSize = paperSizeMm(paper, orient), mapArea = mapAreaMm(paperSize), grid = chooseGrid(maxPages);
-      var mapPxW = Math.round((mapArea.widthMm / 25.4) * targetDpi), mapPxH = Math.round((mapArea.heightMm / 25.4) * targetDpi);
+      var travelBbox = {
+        west: Math.min(coverage.bbox.west, place.lon),
+        east: Math.max(coverage.bbox.east, place.lon),
+        south: Math.min(coverage.bbox.south, place.lat),
+        north: Math.max(coverage.bbox.north, place.lat)
+      };
+      var paperSize = paperSizeMm(paper, orient);
+      var mapArea = mapAreaMm(paperSize);
+      var mapPxW = Math.round((mapArea.widthMm / 25.4) * targetDpi);
+      var mapPxH = Math.round((mapArea.heightMm / 25.4) * targetDpi);
       if (mapPxW > MAX_CANVAS_SIDE || mapPxH > MAX_CANVAS_SIDE) {
         var s = Math.min(MAX_CANVAS_SIDE / mapPxW, MAX_CANVAS_SIDE / mapPxH);
         mapPxW = Math.round(mapPxW * s); mapPxH = Math.round(mapPxH * s);
@@ -329,34 +339,22 @@
       var mpd = metersPerDegree(place.lat);
       var resEq = 156543.03392 / Math.pow(2, planZoom);
       var mpp = resEq * Math.cos(deg2rad(place.lat));
-      var pageWidthM = mapPxW * mpp, pageHeightM = mapPxH * mpp;
-      var totalW = pageWidthM * grid.cols, totalH = pageHeightM * grid.rows;
-      var travelW = (coverage.bbox.east - coverage.bbox.west) * mpd.lon;
-      var travelH = (coverage.bbox.north - coverage.bbox.south) * mpd.lat;
-      var coverW = Math.min(Math.max(travelW, pageWidthM), totalW);
-      var coverH = Math.min(Math.max(travelH, pageHeightM), totalH);
-      coverW = Math.max(coverW, pageWidthM);
-      coverH = Math.max(coverH, pageHeightM);
-      var clipped = coverW < travelW * 0.98 || coverH < travelH * 0.98;
-      var coverBbox = {
-        west: place.lon - (coverW / 2) / mpd.lon, east: place.lon + (coverW / 2) / mpd.lon,
-        south: place.lat - (coverH / 2) / mpd.lat, north: place.lat + (coverH / 2) / mpd.lat
-      };
+      var pageWidthM = mapPxW * mpp;
+      var pageHeightM = mapPxH * mpp;
       var scaleDenom = Math.round(mpp * targetDpi * 39.3701);
-      var pages = buildPageGrid(coverBbox, grid);
-      var homeIdx = assignHomePageIndex(pages, place.lon, place.lat, grid);
-      for (var hi = 0; hi < pages.length; hi++) pages[hi].hasHome = (hi === homeIdx);
-      var homePageNums = [homeIdx + 1];
-      setStatus('Center: ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '\n' + travelLabel + '\nGrid: ' + grid.rows + 'x' + grid.cols + ' = ' + grid.pages + ' pages\nHome is on page: ' + homePageNums[0] + '\nCoverage: ' + (coverW / 1609.344).toFixed(2) + ' mi x ' + (coverH / 1609.344).toFixed(2) + ' mi' + (clipped ? '\nCoverage clipped to fit max pages.' : '') + '\nRendering...');
+      var allTiles = buildTravelTiles(place, travelBbox, pageWidthM, pageHeightM, mpd);
+      var pages = selectConnectedPages(allTiles, maxPages);
+      var clipped = pages.length < allTiles.length;
+      setStatus('Center: ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '\n' + travelLabel + '\nTiles covering travel area: ' + allTiles.length + ' → printing ' + pages.length + ' (home first, then nearest)\nPage size ~ ' + (pageWidthM / 1609.344).toFixed(2) + ' × ' + (pageHeightM / 1609.344).toFixed(2) + ' mi\n' + (clipped ? 'Stopped at max pages (travel area not fully covered).\n' : 'Travel area fully covered.\n') + 'Rendering...');
       var pageCanvases = [];
       for (var pi = 0; pi < pages.length; pi++) {
         if (cancelled) throw new Error('Cancelled');
         var page = pages[pi];
-        setStatus('Rendering page ' + (pi + 1) + ' of ' + pages.length + ' (row ' + (page.row + 1) + ', col ' + (page.col + 1) + ')...\n' + travelLabel + (page.hasHome ? '\n(This page contains HOME)' : ''));
+        setStatus('Rendering page ' + (pi + 1) + ' of ' + pages.length + (page.hasHome ? ' ★ HOME' : '') + ' (grid col ' + page.col + ', row ' + page.row + ')...\n' + travelLabel);
         setProgress(8 + (pi / pages.length) * 80);
         var canvas = await renderPage(page, mapPxW, mapPxH, labelScale, place.lon, place.lat);
         pageCanvases.push({ canvas: canvas, page: page });
-        if (pi === 0 || page.hasHome) {
+        if (page.hasHome || pi === 0) {
           var preview = document.getElementById('previewCanvas'), pctx = preview.getContext('2d');
           var sc = Math.min(1, 680 / canvas.width);
           preview.width = Math.round(canvas.width * sc); preview.height = Math.round(canvas.height * sc);
@@ -366,11 +364,12 @@
       }
       if (cancelled) throw new Error('Cancelled');
       setStatus('Assembling PDF...'); setProgress(90);
+      var grid = { rows: pages.length, cols: 1, pages: pages.length };
       var pdf = buildPdf({ orient: orient, paper: paper, place: place, grid: grid, pageCanvases: pageCanvases, mapArea: mapArea, paperSize: paperSize, scaleDenom: scaleDenom, travelLabel: travelLabel, clipped: clipped });
       setProgress(100);
-      var fname = 'road-map_' + place.lat.toFixed(4) + '_' + place.lon.toFixed(4) + '_' + grid.rows + 'x' + grid.cols + '.pdf';
+      var fname = 'road-map_' + place.lat.toFixed(4) + '_' + place.lon.toFixed(4) + '_' + pages.length + 'p.pdf';
       pdf.save(fname);
-      setStatus('Done! Saved ' + fname + '\n' + pageCanvases.length + ' pages · ' + travelLabel + '\nHome is on page: ' + homePageNums[0] + ' (look for red HOME marker)\nPrint at 100% scale and tape together using the row/col labels.' + (clipped ? '\nNote: coverage was reduced to fit the page limit.' : ''), clipped ? 'warn' : 'ok');
+      setStatus('Done! Saved ' + fname + '\n' + pages.length + ' pages · ' + travelLabel + '\nPage 1 is HOME (red marker). Pages expand outward and stay connected.\nPrint at 100% scale and tape using grid (col, row) labels.' + (clipped ? '\nNote: max pages reached before full travel area was covered.' : ''), clipped ? 'warn' : 'ok');
     } catch (err) {
       if (err.message === 'Cancelled') setStatus('Cancelled.', 'warn');
       else { console.error(err); setStatus('Error: ' + err.message, 'error'); }
