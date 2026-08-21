@@ -99,10 +99,8 @@
   function mapAreaMm(paper) {
     return { widthMm: paper.widthMm - 2 * MARGIN_MM, heightMm: paper.heightMm - MARGIN_MM - HEADER_MM - FOOTER_MM, margin: MARGIN_MM, header: HEADER_MM, footer: FOOTER_MM };
   }
-  function zoomForPage(widthPx, heightPx, lonSpan, latSpan) {
-    var zLon = Math.log2((widthPx * 360) / (lonSpan * WORLD_TILE_SIZE));
-    var zLat = Math.log2((heightPx * 360) / (latSpan * WORLD_TILE_SIZE));
-    var z = Math.max(zLon, zLat);
+  function zoomForPage(widthPx, lonSpan) {
+    var z = Math.log2((widthPx * 360) / (lonSpan * WORLD_TILE_SIZE));
     return isFinite(z) ? z : 15;
   }
   function buildTravelTiles(place, travelBbox, pageWidthM, pageHeightM, mpd) {
@@ -135,22 +133,64 @@
     var home = null;
     for (var h = 0; h < tiles.length; h++) if (tiles[h].isHome) { home = tiles[h]; break; }
     if (!home) home = tiles[0];
-    var selected = [], visited = {}, queue = [home];
-    while (queue.length > 0 && selected.length < maxPages) {
-      queue.sort(function (a, b) {
+    var selected = [];
+    var chosen = {};
+    var heap = [home];
+    var inHeap = {};
+    inHeap[home.col + ',' + home.row] = true;
+    function heapPush(t) {
+      if (!t) return;
+      var k = t.col + ',' + t.row;
+      if (chosen[k] || inHeap[k] || !byKey[k]) return;
+      inHeap[k] = true;
+      heap.push(t);
+    }
+    while (heap.length > 0 && selected.length < maxPages) {
+      heap.sort(function (a, b) {
         if (a.dist !== b.dist) return a.dist - b.dist;
+        var rank = function (t) {
+          if (t.col > 0 && t.row === 0) return 0;
+          if (t.col === 0 && t.row > 0) return 1;
+          if (t.col < 0 && t.row === 0) return 2;
+          if (t.col === 0 && t.row < 0) return 3;
+          return 4;
+        };
+        var ra = rank(a), rb = rank(b);
+        if (ra !== rb) return ra - rb;
         if (a.row !== b.row) return a.row - b.row;
         return a.col - b.col;
       });
-      var t = queue.shift();
+      var t = heap.shift();
       var k = t.col + ',' + t.row;
-      if (visited[k]) continue;
-      visited[k] = true;
+      inHeap[k] = false;
+      if (chosen[k]) continue;
+      if (selected.length > 0) {
+        var touches = false;
+        var dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+        for (var d = 0; d < dirs.length; d++) {
+          var ck = (t.col + dirs[d][0]) + ',' + (t.row + dirs[d][1]);
+          if (chosen[ck]) { touches = true; break; }
+        }
+        if (!touches) continue;
+      }
+      chosen[k] = true;
       selected.push(t);
-      var neigh = [[t.col - 1, t.row], [t.col + 1, t.row], [t.col, t.row - 1], [t.col, t.row + 1]];
-      for (var n = 0; n < neigh.length; n++) {
-        var nk = neigh[n][0] + ',' + neigh[n][1];
-        if (!visited[nk] && byKey[nk]) queue.push(byKey[nk]);
+      heapPush(byKey[(t.col + 1) + ',' + t.row]);
+      heapPush(byKey[t.col + ',' + (t.row + 1)]);
+      heapPush(byKey[(t.col - 1) + ',' + t.row]);
+      heapPush(byKey[t.col + ',' + (t.row - 1)]);
+    }
+    for (var s = 0; s < selected.length; s++) {
+      selected[s].pdfIndex = s;
+      selected[s].touchesPdf = [];
+      var dirs2 = [[1, 0, 'E'], [-1, 0, 'W'], [0, 1, 'N'], [0, -1, 'S']];
+      for (var d2 = 0; d2 < dirs2.length; d2++) {
+        var nk2 = (selected[s].col + dirs2[d2][0]) + ',' + (selected[s].row + dirs2[d2][1]);
+        for (var s2 = 0; s2 < selected.length; s2++) {
+          if (selected[s2].col + ',' + selected[s2].row === nk2) {
+            selected[s].touchesPdf.push({ page: s2 + 1, dir: dirs2[d2][2] });
+          }
+        }
       }
     }
     return selected;
@@ -170,7 +210,7 @@
   async function geocode(address) {
     var url = new URL('https://nominatim.openstreetmap.org/search');
     url.searchParams.set('q', address); url.searchParams.set('format', 'json'); url.searchParams.set('limit', '1');
-    var res = await fetch(url.toString(), { headers: { Accept: 'application/json', 'User-Agent': 'PrintableMapPDF/4.0 (travel-distance printable map)' } });
+    var res = await fetch(url.toString(), { headers: { Accept: 'application/json', 'User-Agent': 'PrintableMapPDF/4.1 (travel-distance printable map)' } });
     if (!res.ok) throw new Error('Geocoding failed (' + res.status + ').');
     var data = await res.json();
     if (!data || !data.length) throw new Error('Address not found.');
@@ -236,12 +276,11 @@
     map.resize();
     simplifyStyleForPrint(map);
     applyRoadLabelScale(map, labelScale);
+    var lonSpan = page.east - page.west;
+    var zoom = zoomForPage(widthPx, lonSpan);
     var centerLon = (page.west + page.east) / 2;
     var centerLat = (page.south + page.north) / 2;
-    var lonSpan = page.east - page.west;
-    var latSpan = page.north - page.south;
-    var zoom = zoomForPage(widthPx, heightPx, lonSpan, latSpan);
-    map.jumpTo({ center: [centerLon, centerLat], zoom: zoom });
+    map.jumpTo({ center: [centerLon, centerLat], zoom: zoom, bearing: 0, pitch: 0 });
     applyRoadLabelScale(map, labelScale);
     if (page.hasHome) addHomeMarker(map, homeLon, homeLat);
     await waitForIdle(map, 15000);
@@ -280,6 +319,10 @@
       if (item.page.hasHome) {
         pdf.setFontSize(9); pdf.setTextColor(190, 18, 60);
         pdf.text('* Home / start address is on this page', mapX, mapArea.margin + 14);
+      } else if (item.page.touchesPdf && item.page.touchesPdf.length) {
+        pdf.setFontSize(7); pdf.setTextColor(60);
+        var adj = item.page.touchesPdf.map(function (t) { return t.dir + '->p' + t.page; }).join('  ');
+        pdf.text('Touches: ' + adj, mapX, mapArea.margin + 14);
       }
       pdf.addImage(imgData, 'JPEG', mapX, mapY, mapArea.widthMm, mapArea.heightMm);
       pdf.setDrawColor(180); pdf.setLineWidth(0.2); pdf.rect(mapX, mapY, mapArea.widthMm, mapArea.heightMm);
@@ -345,12 +388,17 @@
       var allTiles = buildTravelTiles(place, travelBbox, pageWidthM, pageHeightM, mpd);
       var pages = selectConnectedPages(allTiles, maxPages);
       var clipped = pages.length < allTiles.length;
+      for (var vi = 1; vi < pages.length; vi++) {
+        if (!pages[vi].touchesPdf || !pages[vi].touchesPdf.length) {
+          console.warn('Connectivity warning: page', vi + 1, 'has no neighbor in selection');
+        }
+      }
       setStatus('Center: ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '\n' + travelLabel + '\nTiles covering travel area: ' + allTiles.length + ' → printing ' + pages.length + ' (home first, then nearest)\nPage size ~ ' + (pageWidthM / 1609.344).toFixed(2) + ' × ' + (pageHeightM / 1609.344).toFixed(2) + ' mi\n' + (clipped ? 'Stopped at max pages (travel area not fully covered).\n' : 'Travel area fully covered.\n') + 'Rendering...');
       var pageCanvases = [];
       for (var pi = 0; pi < pages.length; pi++) {
         if (cancelled) throw new Error('Cancelled');
         var page = pages[pi];
-        setStatus('Rendering page ' + (pi + 1) + ' of ' + pages.length + (page.hasHome ? ' ★ HOME' : '') + ' (grid col ' + page.col + ', row ' + page.row + ')...\n' + travelLabel);
+        setStatus('Rendering page ' + (pi + 1) + ' of ' + pages.length + (page.hasHome ? ' * HOME' : '') + ' (grid col ' + page.col + ', row ' + page.row + ')...\n' + travelLabel);
         setProgress(8 + (pi / pages.length) * 80);
         var canvas = await renderPage(page, mapPxW, mapPxH, labelScale, place.lon, place.lat);
         pageCanvases.push({ canvas: canvas, page: page });
@@ -369,7 +417,7 @@
       setProgress(100);
       var fname = 'road-map_' + place.lat.toFixed(4) + '_' + place.lon.toFixed(4) + '_' + pages.length + 'p.pdf';
       pdf.save(fname);
-      setStatus('Done! Saved ' + fname + '\n' + pages.length + ' pages · ' + travelLabel + '\nPage 1 is HOME (red marker). Pages expand outward and stay connected.\nPrint at 100% scale and tape using grid (col, row) labels.' + (clipped ? '\nNote: max pages reached before full travel area was covered.' : ''), clipped ? 'warn' : 'ok');
+      setStatus('Done! Saved ' + fname + '\n' + pages.length + ' pages · ' + travelLabel + '\nPage 1 is HOME. Each page header lists which edges touch which pages.\nPrint at 100% scale and tape using grid (col, row) labels.' + (clipped ? '\nNote: max pages reached before full travel area was covered.' : ''), clipped ? 'warn' : 'ok');
     } catch (err) {
       if (err.message === 'Cancelled') setStatus('Cancelled.', 'warn');
       else { console.error(err); setStatus('Error: ' + err.message, 'error'); }
