@@ -7,7 +7,7 @@
   const MAX_CANVAS_SIDE = 1600;
   const ISO_RAYS = 16;
   const ROAD_LABEL_LAYERS = ['highway-name-path', 'highway-name-minor', 'highway-name-major'];
-  const MARGIN_MM = 12, HEADER_MM = 16, FOOTER_MM = 18;
+  const MARGIN_MM = 0, HEADER_MM = 0, FOOTER_MM = 0; // full-bleed: map fills entire page for edge-to-edge taping
   let cancelled = false, renderMap = null;
 
   function setStatus(msg, type) {
@@ -97,7 +97,7 @@
     return orient === 'landscape' ? { widthMm: h, heightMm: w } : { widthMm: w, heightMm: h };
   }
   function mapAreaMm(paper) {
-    return { widthMm: paper.widthMm - 2 * MARGIN_MM, heightMm: paper.heightMm - MARGIN_MM - HEADER_MM - FOOTER_MM, margin: MARGIN_MM, header: HEADER_MM, footer: FOOTER_MM };
+    return { widthMm: paper.widthMm, heightMm: paper.heightMm, margin: 0, header: 0, footer: 0 };
   }
   function zoomForPage(widthPx, lonSpan) {
     var z = Math.log2((widthPx * 360) / (lonSpan * WORLD_TILE_SIZE));
@@ -210,7 +210,7 @@
   async function geocode(address) {
     var url = new URL('https://nominatim.openstreetmap.org/search');
     url.searchParams.set('q', address); url.searchParams.set('format', 'json'); url.searchParams.set('limit', '1');
-    var res = await fetch(url.toString(), { headers: { Accept: 'application/json', 'User-Agent': 'PrintableMapPDF/4.1 (travel-distance printable map)' } });
+    var res = await fetch(url.toString(), { headers: { Accept: 'application/json', 'User-Agent': 'PrintableMapPDF/4.2 (full-bleed printable map)' } });
     if (!res.ok) throw new Error('Geocoding failed (' + res.status + ').');
     var data = await res.json();
     if (!data || !data.length) throw new Error('Address not found.');
@@ -306,36 +306,32 @@
     var pageCanvases = opts.pageCanvases, mapArea = opts.mapArea, paperSize = opts.paperSize;
     var scaleDenom = opts.scaleDenom, travelLabel = opts.travelLabel, clipped = opts.clipped;
     var pdf = new jsPDF({ orientation: orient, unit: 'mm', format: paper === 'a4' ? 'a4' : 'letter' });
-    var pageH = paperSize.heightMm, mapX = mapArea.margin, mapY = mapArea.margin + mapArea.header;
+    var pageW = paperSize.widthMm, pageH = paperSize.heightMm;
     for (var i = 0; i < pageCanvases.length; i++) {
       if (i > 0) pdf.addPage();
       var item = pageCanvases[i], imgData = item.canvas.toDataURL('image/jpeg', 0.92);
-      pdf.setFontSize(9); pdf.setTextColor(40);
-      pdf.text('Road Map - ' + place.display.split(',').slice(0, 2).join(','), mapX, mapArea.margin + 5);
-      pdf.setFontSize(8); pdf.setTextColor(100);
-      var pageLabel = 'Page ' + (i + 1) + ' of ' + pageCanvases.length + '  |  grid (' + item.page.col + ', ' + item.page.row + ')';
-      if (item.page.hasHome) pageLabel += '  |  * HOME';
-      pdf.text(pageLabel, mapX, mapArea.margin + 10);
-      if (item.page.hasHome) {
-        pdf.setFontSize(9); pdf.setTextColor(190, 18, 60);
-        pdf.text('* Home / start address is on this page', mapX, mapArea.margin + 14);
-      } else if (item.page.touchesPdf && item.page.touchesPdf.length) {
-        pdf.setFontSize(7); pdf.setTextColor(60);
-        var adj = item.page.touchesPdf.map(function (t) { return t.dir + '->p' + t.page; }).join('  ');
-        pdf.text('Touches: ' + adj, mapX, mapArea.margin + 14);
+      pdf.addImage(imgData, 'JPEG', 0, 0, pageW, pageH);
+      var label = (i + 1) + '/' + pageCanvases.length + '  (' + item.page.col + ',' + item.page.row + ')';
+      if (item.page.hasHome) label += ' HOME';
+      pdf.setFontSize(7);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text(label, 2.2, 4.2);
+      pdf.setTextColor(30);
+      pdf.text(label, 2.0, 4.0);
+      if (item.page.touchesPdf && item.page.touchesPdf.length) {
+        var adj = item.page.touchesPdf.map(function (t) { return t.dir + '->p' + t.page; }).join(' ');
+        pdf.setFontSize(6);
+        pdf.setTextColor(255, 255, 255);
+        pdf.text(adj, 2.2, 7.2);
+        pdf.setTextColor(60);
+        pdf.text(adj, 2.0, 7.0);
       }
-      pdf.addImage(imgData, 'JPEG', mapX, mapY, mapArea.widthMm, mapArea.heightMm);
-      pdf.setDrawColor(180); pdf.setLineWidth(0.2); pdf.rect(mapX, mapY, mapArea.widthMm, mapArea.heightMm);
-      pdf.setDrawColor(0); pdf.setLineWidth(0.3);
-      var mark = 3, w = mapArea.widthMm, h = mapArea.heightMm;
-      pdf.line(mapX - 1, mapY, mapX - 1 - mark, mapY); pdf.line(mapX, mapY - 1, mapX, mapY - 1 - mark);
-      pdf.line(mapX + w + 1, mapY, mapX + w + 1 + mark, mapY); pdf.line(mapX + w, mapY - 1, mapX + w, mapY - 1 - mark);
-      pdf.line(mapX - 1, mapY + h, mapX - 1 - mark, mapY + h); pdf.line(mapX, mapY + h + 1, mapX, mapY + h + 1 + mark);
-      pdf.line(mapX + w + 1, mapY + h, mapX + w + 1 + mark, mapY + h); pdf.line(mapX + w, mapY + h + 1, mapX + w, mapY + h + 1 + mark);
-      var footerY = pageH - mapArea.margin - 4;
-      pdf.setFontSize(7); pdf.setTextColor(90);
-      pdf.text('(c) OpenStreetMap / OpenFreeMap / OSRM  |  Center ' + place.lat.toFixed(5) + ', ' + place.lon.toFixed(5) + '  |  ~1:' + scaleDenom.toLocaleString() + '  |  Print at 100%', mapX, footerY);
-      pdf.text(travelLabel + (clipped ? ' (max pages; travel area not fully covered)' : ''), mapX, footerY + 3.5);
+      pdf.setFontSize(5);
+      pdf.setTextColor(255, 255, 255);
+      var foot = 'OSM/OpenFreeMap  ~1:' + scaleDenom.toLocaleString() + '  print 100% / borderless';
+      pdf.text(foot, 2.2, pageH - 2.3);
+      pdf.setTextColor(90);
+      pdf.text(foot, 2.0, pageH - 2.5);
     }
     return pdf;
   }
@@ -417,7 +413,7 @@
       setProgress(100);
       var fname = 'road-map_' + place.lat.toFixed(4) + '_' + place.lon.toFixed(4) + '_' + pages.length + 'p.pdf';
       pdf.save(fname);
-      setStatus('Done! Saved ' + fname + '\n' + pages.length + ' pages · ' + travelLabel + '\nPage 1 is HOME. Each page header lists which edges touch which pages.\nPrint at 100% scale and tape using grid (col, row) labels.' + (clipped ? '\nNote: max pages reached before full travel area was covered.' : ''), clipped ? 'warn' : 'ok');
+      setStatus('Done! Saved ' + fname + '\n' + pages.length + ' pages · ' + travelLabel + '\nPage 1 is HOME. Map fills each page edge-to-edge.\nPrint at 100% scale (borderless if your printer supports it) and tape edge-to-edge — no margins to trim.' + (clipped ? '\nNote: max pages reached before full travel area was covered.' : ''), clipped ? 'warn' : 'ok');
     } catch (err) {
       if (err.message === 'Cancelled') setStatus('Cancelled.', 'warn');
       else { console.error(err); setStatus('Error: ' + err.message, 'error'); }
